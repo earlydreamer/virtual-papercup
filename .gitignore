@@ -1,0 +1,69 @@
+# 빌드 산출물
+dist/
+node_modules/
+
+# 의존성 캐시
+.vite/
+*.tsbuildinfo
+
+# 환경 변수 — 실수로 들어오지 못하게 막는다
+.env
+.env.*
+!.env.example
+
+# 로컬 전용 메모와 환경 구성
+*.local.md
+LOCAL.md
+NOTES.md
+docs/local/
+
+# 검증·디버깅 산출물
+shot-*.png
+probe-*.png
+*.debug.png
+*.log
+
+# OS / 에디터
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+
+# 내부 자료는 저장소 밖에 둡니다. 아래 규칙은 우발적 추가를 막는 보조 장치입니다.
+vault/
+obsidian-vault/
+.obsidian/
+.agents/
+.codex/
+.claude/
+.opencode/
+.harness/
+.superpowers/
+.gstack/
+.omo/
+.worktrees/
+.local/
+.local-work-records/
+private/
+internal/
+secrets/
+credentials/
+certs/
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+*.jks
+*.keystore
+.npmrc
+*.bak
+*.backup
+*.zip
+*.7z
+coverage/
+test-results/
+playwright-report/

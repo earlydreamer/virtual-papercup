@@ -1,0 +1,21 @@
+{
+  "name": "virtual-papercup",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "종이컵에 담긴 물이 넘치지 않게 운전하는 습관 훈련 앱 (이니셜 D 두부배달 오마주)",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "node --test tests/*.test.ts tests/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
+  }
+}

@@ -1,0 +1,11 @@
+# 줄바꿈은 저장소 전체에서 LF 로 통일한다.
+# Windows 에서 체크아웃해도 LF 를 유지해 .editorconfig 와 어긋나지 않게 한다.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary

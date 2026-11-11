@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no"
+    />
+    <meta name="theme-color" content="#0b0d12" />
+    <title>가상 종이컵 — 물을 넘치지 않게</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main id="app">
+      <canvas id="scene"></canvas>
+
+      <header class="hud">
+        <div class="chip">
+          <span class="dot" id="dot"></span>
+          <span id="state">대기</span>
+        </div>
+        <div class="stats">
+          <div class="stat">
+            <span class="stat__k">물</span>
+            <strong id="water">72%</strong>
+          </div>
+          <div class="stat">
+            <span class="stat__k">넘침</span>
+            <strong id="spills">0</strong>
+          </div>
+          <div class="stat">
+            <span class="stat__k">경과</span>
+            <strong id="clock">0:00</strong>
+          </div>
+        </div>
+      </header>
+
+      <canvas id="gauge" width="88" height="88"></canvas>
+
+      <footer class="bar">
+        <div class="fillctl">
+          <label for="fill">처음 물 높이 <span id="fillLabel">72%</span></label>
+          <input id="fill" type="range" min="30" max="92" value="72" step="1" />
+        </div>
+        <div class="actions">
+          <button id="btnStop" class="btn btn--danger" hidden>종료</button>
+        </div>
+      </footer>
+
+      <section id="overlay" class="overlay">
+        <div class="card" id="cardIntro">
+          <p class="eyebrow">두부배달 훈련</p>
+          <h1>가상 종이컵</h1>
+          <p class="sub">
+            컵에 담긴 물이 넘치지 않게 달리는 연습입니다.
+            정지 상태에서 기준을 잡으면 거치한 자세를 기준으로 물이 움직입니다.
+          </p>
+          <ol class="steps">
+            <li>폰을 차량 홀더에 단단히 고정합니다.</li>
+            <li>평평한 곳에 정차한 상태에서 <b>기준 잡기</b>를 누릅니다.</li>
+            <li>1.5초 동안 움직이지 마세요.</li>
+            <li>기준이 잡히면 <b>시작</b>을 누르고 출발합니다.</li>
+          </ol>
+          <button id="btnLevel" class="btn btn--primary" type="button">기준 잡기</button>
+          <p class="notice" id="notice">
+            주행 중에는 화면을 보거나 조작하지 마세요. 안전한 곳에 정차한 뒤 사용하세요.
+          </p>
+        </div>
+
+        <div class="card" id="cardLevel" hidden>
+          <p class="eyebrow">기준 설정</p>
+          <h2>수평 유지</h2>
+          <p class="sub">
+            차를 세운 채로 폰을 건드리지 마세요. 지금 자세가 컵의 기준이 됩니다.
+          </p>
+          <div class="levelBox">
+            <canvas id="levelDial" width="140" height="140"></canvas>
+            <div class="levelMeta">
+              <div class="levelMeta__row">
+                <span>안정도</span><strong id="stability">—</strong>
+              </div>
+              <div class="levelMeta__row">
+                <span>남은 시간</span><strong id="countdown">1.5s</strong>
+              </div>
+            </div>
+          </div>
+          <div class="progress"><i id="progress"></i></div>
+          <p class="hint" id="levelHint">측정 중…</p>
+        </div>
+
+        <div class="card" id="cardReady" hidden>
+          <p class="eyebrow">준비 완료</p>
+          <h2>기준이 잡혔습니다</h2>
+          <p class="sub">
+            이제 이 자세가 물이 편평한 상태입니다. 출발한 뒤 변화만 측정합니다.
+          </p>
+          <div class="levelBox">
+            <canvas id="readyDial" width="140" height="140"></canvas>
+            <div class="levelMeta">
+              <div class="levelMeta__row">
+                <span>현재 기울기</span><strong id="readyTilt">0.0°</strong>
+              </div>
+              <div class="levelMeta__row">
+                <span>중력 크기</span><strong id="readyG">9.81</strong>
+              </div>
+            </div>
+          </div>
+          <button id="btnStart" class="btn btn--primary" type="button">시작</button>
+          <button id="btnRelevel" class="btn btn--ghost" type="button">기준 다시 잡기</button>
+        </div>
+
+        <div class="card" id="cardResult" hidden>
+          <p class="eyebrow">주행 종료</p>
+          <h2>기록</h2>
+          <div class="resultGrid">
+            <div class="resultGrid__cell">
+              <span>넘침</span><strong id="resSpills">0</strong>
+            </div>
+            <div class="resultGrid__cell">
+              <span>주행 시간</span><strong id="resTime">0:00</strong>
+            </div>
+            <div class="resultGrid__cell">
+              <span>최대 기울기</span><strong id="resMaxTilt">0.0°</strong>
+            </div>
+            <div class="resultGrid__cell">
+              <span>흘린 양</span><strong id="resSpilled">0%</strong>
+            </div>
+          </div>
+          <button id="btnAgain" class="btn btn--primary" type="button">다시 시작</button>
+          <button id="btnRelevel2" class="btn btn--ghost" type="button">기준 다시 잡기</button>
+          <button id="btnReset" class="btn btn--ghost" type="button">초기화</button>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
