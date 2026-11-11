@@ -5,10 +5,15 @@
   "type": "module",
   "description": "종이컵에 담긴 물이 넘치지 않게 운전하는 습관 훈련 앱 (이니셜 D 두부배달 오마주)",
   "scripts": {
+    "predev": "npm run check:repo",
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "npm run check:repo && tsc --noEmit && vite build && npm run check:dist",
+    "prepreview": "npm run check:repo && npm run check:dist",
     "preview": "vite preview",
-    "test": "node --test tests/*.test.ts tests/*.test.mjs"
+    "test": "node --test tests/*.test.ts tests/*.test.mjs",
+    "check:repo": "node scripts/check-repo.mjs",
+    "check:staged": "node scripts/check-repo.mjs --staged",
+    "check:dist": "node scripts/check-repo.mjs --dist"
   },
   "engines": {
     "node": ">=24 <25"
