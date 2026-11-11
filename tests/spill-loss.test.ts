@@ -22,11 +22,40 @@ test('손실: 넘치지 않으면 물이 줄지 않는다', () => {
   assert.ok(Math.abs(cup.fill - before) < 1e-9, `fill=${cup.fill}`);
 });
 
-test('손실: spillRate 0 이면 연습 모드로 물이 유지된다', () => {
+test('손실: spillRate가 0이면 넘침 횟수만 기록한다', () => {
   const cup = new Cup({ fill: 0.8, spillRate: 0 });
   for (let i = 0; i < 200; i++) cup.step({ x: 1.5, y: 0 }, 16.7);
   assert.ok(cup.spills >= 1, '넘침 판정은 그대로여야 한다');
   assert.ok(Math.abs(cup.fill - 0.8) < 1e-9, `fill=${cup.fill}`);
+  assert.equal(cup.spilledVolume, 0);
+});
+
+test('물 높이 유지: 일반 넘침을 한 컵 이상 누적해도 측정을 계속한다', () => {
+  const cup = new Cup({ fill: 0.8, keepFill: true });
+  const tilt = { x: 1.5, y: 0 };
+  const normal = new Cup({ fill: 0.8 });
+  cup.step(tilt, 16.7);
+  normal.step(tilt, 16.7);
+  assert.ok(normal.spilledVolume > 0);
+  assert.equal(cup.spilledVolume, normal.spilledVolume);
+
+  for (let i = 0; i < 300; i++) cup.step(tilt, 16.7);
+  assert.equal(cup.fill, 0.8);
+  assert.equal(cup.spills, 1);
+  assert.ok(cup.spilledVolume > 1);
+  assert.equal(cup.drained, false);
+});
+
+test('물 높이 유지: 뒤집힘의 넘침량을 누적하고 초기화할 수 있다', () => {
+  const cup = new Cup({ fill: 0.8, keepFill: true });
+  for (let i = 0; i < 30; i++) cup.step({ x: 0, y: 0, overturned: true }, 16.7);
+  assert.equal(cup.fill, 0.8);
+  assert.equal(cup.spills, 1);
+  assert.ok(cup.spilledVolume > 1);
+  assert.equal(cup.drained, false);
+  cup.reset();
+  assert.equal(cup.spilledVolume, 0);
+  assert.equal(cup.spills, 0);
 });
 
 test('손실: 물이 다 쏟아지면 drained 가 되고 더 넘치지 않는다', () => {

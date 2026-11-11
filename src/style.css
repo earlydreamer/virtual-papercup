@@ -287,6 +287,29 @@ body {
 
 /* ---------- 기준 설정 ---------- */
 
+.keepFill {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  margin: 8px 0 12px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.keepFill input {
+  inline-size: 20px;
+  block-size: 20px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.keepFill small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+}
+
 .levelBox {
   display: flex;
   align-items: center;

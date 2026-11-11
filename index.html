@@ -105,6 +105,13 @@
               </div>
             </div>
           </div>
+          <label class="keepFill">
+            <input id="keepFill" type="checkbox" role="switch" aria-describedby="keepFillHint" />
+            <span>
+              <strong>물 높이 유지</strong>
+              <small id="keepFillHint">물이 줄지 않고 넘친 양만 기록합니다.</small>
+            </span>
+          </label>
           <button id="btnStart" class="btn btn--primary" type="button">시작</button>
           <button id="btnRelevel" class="btn btn--ghost" type="button">기준 다시 잡기</button>
         </div>
@@ -123,7 +130,7 @@
               <span>최대 기울기</span><strong id="resMaxTilt">0.0°</strong>
             </div>
             <div class="resultGrid__cell">
-              <span>흘린 양</span><strong id="resSpilled">0%</strong>
+              <span>누적 넘침량</span><strong id="resSpilled">0컵</strong>
             </div>
           </div>
           <button id="btnAgain" class="btn btn--primary" type="button">다시 시작</button>

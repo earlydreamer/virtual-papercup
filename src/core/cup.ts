@@ -27,9 +27,11 @@ export interface CupConfig {
   /**
    * 넘칠 때 초당 잃는 물 비율의 계수.
    * 실제 유량은 벽 위로 솟은 높이의 1.5승에 비례하므로(토리첼리),
-   * 이 값에 초과량의 1.2승을 곱해서 쓴다. 0 이면 물이 줄지 않는 연습 모드.
+   * 이 값에 초과량의 1.2승을 곱해서 쓴다. 0이면 손실량을 계산하지 않는다.
    */
   readonly spillRate: number;
+  /** 넘친 양을 기록하면서 물 높이를 유지한다. */
+  readonly keepFill: boolean;
 }
 
 export const DEFAULT_CUP: CupConfig = {
@@ -39,6 +41,7 @@ export const DEFAULT_CUP: CupConfig = {
   wave: 45,
   damping: 7,
   spillRate: 0.35,
+  keepFill: false,
 };
 
 /** 한 프레임에 소화할 최대 시간. 탭 복귀 시 폭주를 막는다. */
@@ -86,14 +89,14 @@ export class Cup {
 
   /** 물이 거의 다 쏟아졌는지. */
   get drained(): boolean {
-    return this.#fill <= DRAINED_LEVEL;
+    return !this.cfg.keepFill && this.#fill <= DRAINED_LEVEL;
   }
 
   /** 누적 넘침 횟수. */
   spills = 0;
   /** 이번 스텝에서 가장 크게 넘친 정도 0..1 (연출용). */
   overflowIntensity = 0;
-  /** 누적 손실량 0..1 (결과 표시용). */
+  /** 컵 한 개를 1로 둔 누적 넘침량. 물 높이 유지 중에는 1을 넘을 수 있다. */
   spilledVolume = 0;
   /** 현재 넘치는 중인지 (히스테리시스). */
   private overflowing = false;
@@ -193,12 +196,7 @@ export class Cup {
         this.overflowing = true;
         this.spills += 1;
       }
-      const loss = Math.min(this.#fill, seconds * this.cfg.spillRate * 14);
-      if (loss > 0) {
-        this.#fill -= loss;
-        this.spilledVolume += loss;
-        this.#base = 2 * this.#fill - 1;
-      }
+      this.#recordSpill(seconds * this.cfg.spillRate * 14);
       return;
     }
 
@@ -219,19 +217,21 @@ export class Cup {
         this.spills += 1;
       }
 
-      // 넘친 만큼 물이 실제로 흘러나간다.
-      // 유량은 벽 위로 솟은 높이의 1.5승에 비례한다(토리첼리). 지수를
-      // 그대로 쓰면 얕게 넘칠 때는 거의 새지 않고, 크게 넘칠 때는
-      // 순식간에 빠진다 — 이게 "조금 기울임"과 "확 기울임"을 가른다.
       const rate = this.cfg.spillRate * Math.pow(maxOverflow, 1.2);
-      const loss = Math.min(this.#fill, rate * seconds);
-      if (loss > 0) {
-        this.#fill -= loss;
-        this.spilledVolume += loss;
-        this.#base = 2 * this.#fill - 1;
-      }
+      this.#recordSpill(rate * seconds);
     } else {
       this.overflowing = false;
+    }
+  }
+
+  #recordSpill(amount: number): void {
+    const spilled = Math.min(this.#fill, amount);
+    if (!(spilled > 0)) return;
+
+    this.spilledVolume += spilled;
+    if (!this.cfg.keepFill) {
+      this.#fill -= spilled;
+      this.#base = 2 * this.#fill - 1;
     }
   }
 
