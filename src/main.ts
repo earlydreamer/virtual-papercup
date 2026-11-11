@@ -27,6 +27,7 @@ const elClock = must<HTMLElement>('#clock');
 const elWater = must<HTMLElement>('#water');
 const elState = must<HTMLElement>('#state');
 const elFill = must<HTMLInputElement>('#fill');
+const elKeepFill = must<HTMLInputElement>('#keepFill');
 const elFillLabel = must<HTMLElement>('#fillLabel');
 const elOverlay = must<HTMLElement>('#overlay');
 const elNotice = must<HTMLElement>('#notice');
@@ -189,11 +190,16 @@ function finishLeveling(): void {
 
 function beginRunning(): void {
   if (!calibration) return;
+  cup = new Cup({ fill: fillRatio(), keepFill: elKeepFill.checked });
+  lp.reset();
+  flash = 0;
   mode = 'running';
   runStart = performance.now();
   runElapsed = 0;
   maxTiltDeg = 0;
-  reportedSpills = cup.spills;
+  reportedSpills = 0;
+  elSpills.textContent = '0';
+  elClock.textContent = '0:00';
   showCard(null);
   setState('주행 중');
   playStart();
@@ -208,7 +214,8 @@ function stopRunning(reason: string = '종료'): void {
   must<HTMLElement>('#resSpills').textContent = String(cup.spills);
   must<HTMLElement>('#resTime').textContent = fmtClock(runElapsed);
   must<HTMLElement>('#resMaxTilt').textContent = `${maxTiltDeg.toFixed(1)}°`;
-  must<HTMLElement>('#resSpilled').textContent = `${Math.round(cup.spilledVolume * 100)}%`;
+  const cups = cup.spilledVolume.toLocaleString('ko-KR', { maximumFractionDigits: 2 });
+  must<HTMLElement>('#resSpilled').textContent = `${cups}컵`;
 }
 
 function resetAll(): void {
@@ -226,13 +233,6 @@ function resetAll(): void {
   elWater.textContent = `${Math.round(cup.fill * 100)}%`;
   setState('대기');
   showCard('intro');
-}
-
-function againSameBaseline(): void {
-  cup = new Cup({ fill: fillRatio() });
-  reportedSpills = 0;
-  elSpills.textContent = '0';
-  beginRunning();
 }
 
 // --- 샘플 처리 ---
@@ -401,7 +401,7 @@ must<HTMLButtonElement>('#btnRelevel2').addEventListener('click', () => {
   beginLeveling();
 });
 must<HTMLButtonElement>('#btnAgain').addEventListener('click', () => {
-  againSameBaseline();
+  beginRunning();
 });
 must<HTMLButtonElement>('#btnReset').addEventListener('click', () => {
   resetAll();
