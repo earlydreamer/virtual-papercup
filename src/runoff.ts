@@ -26,3 +26,41 @@ export function advanceRunoff(column: Float32Array, inflow: number, dt: number):
     column[0] = Math.max(0, inflow);
   }
 }
+
+function random(seed: number): number {
+  const value = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
+  return value - Math.floor(value);
+}
+
+function smooth(value: number): number {
+  const t = Math.max(0, Math.min(1, value));
+  return t * t * (3 - 2 * t);
+}
+
+function noise(position: number, seed: number): number {
+  const cell = Math.floor(position);
+  const a = random(cell + seed);
+  return a + (random(cell + 1 + seed) - a) * smooth(position - cell);
+}
+
+/** 고정된 불규칙 물길을 따라 굵기가 이동합니다. 아래쪽에서는 이웃 물길이 합류합니다. */
+export function runoffTrail(index: number, progress: number, time: number, count: number): { angle: number; width: number } {
+  const p = Math.max(0, Math.min(1, progress));
+  const step = Math.PI * 2 / count;
+  const group = Math.floor(index / 5);
+  const leader = group * 5 + 2;
+  const seed = random(index * 3.19);
+  const start = index * step;
+  const develop = smooth((p - 0.1) / 0.25);
+  const merge = smooth((p - 0.38) / 0.52);
+  const wandering = (noise(p * 5.3, index * 13) - 0.5) * 0.36 * develop;
+  const shared = (leader + (random(group + 91) - 0.5) * 1.3) * step
+    + (noise(p * 3.7, group * 23 + 17) - 0.5) * 0.23;
+  const angle = (start + wandering) * (1 - merge) + shared * merge;
+  // 가는 가지는 중간에 끊어지거나 아래쪽의 굵은 물길에 합류합니다.
+  const active = index === leader || seed > 0.68;
+  const packet = noise(p * 5.5 - time / 950, index * 7 + 41);
+  const breakup = Math.max(0, (packet - 0.24) / 0.76);
+  const branch = index === leader ? 1 : 1 - smooth((p - 0.58) / 0.32);
+  return { angle, width: active ? develop * branch * (0.45 + seed) * breakup * 1.8 : 0 };
+}

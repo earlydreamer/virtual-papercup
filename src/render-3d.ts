@@ -3,7 +3,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { Cup } from './core/cup.ts';
 import { collectRimFlow, sampleWaterLevel } from './core/water-surface.ts';
-import { advanceRunoff, runoffProfile } from './runoff.ts';
+import { advanceRunoff, runoffProfile, runoffTrail } from './runoff.ts';
 
 const TAU = Math.PI * 2;
 const RINGS = 22;
@@ -301,7 +301,7 @@ export class CupRenderer3D {
       const mesh = this.streams[i]!;
       const column = this.runoff[i]!;
       advanceRunoff(column, flow, dt);
-      mesh.visible = column.some(value => value > 0.015) && i % 3 === 0;
+      mesh.visible = column.some(value => value > 0.015);
       const angle = i / STREAMS * TAU;
       const cos = Math.cos(angle);
       const sin = Math.sin(angle);
@@ -324,18 +324,17 @@ export class CupRenderer3D {
         this.sheetColors[colorIndex + 2] = 1;
         this.sheetColors[colorIndex + 3] = coverage * (0.68 + wave * 0.12)
           * (1 - p * 0.35 * (0.5 + 0.5 * Math.sin(i * 2.3)));
-        const bend = Math.sin(p * 8 + i * 2.7) * 0.014 * Math.sin(p * Math.PI);
-        const streamAngle = angle + bend;
+        const trail = runoffTrail(i, p, now, STREAMS);
+        const streamAngle = trail.angle;
         const streamCos = Math.cos(streamAngle);
         const streamSin = Math.sin(streamAngle);
-        const width = coverage * (0.008 + Math.min(localFlow, 1) * 0.025)
-          * (1 + wave * 0.18) * (1 - p * 0.25);
+        const width = coverage * (0.012 + Math.min(localFlow, 1) * 0.035) * trail.width;
         const x = streamCos * (radius + 0.003);
         const y = profile.height + this.cupGroup.position.y;
         const z = streamSin * (radius + 0.003);
         // 가는 물길이 종이 표면에서 뜨지 않도록 단면의 두께를 줄입니다.
-        const sideX = -sin;
-        const sideZ = cos;
+        const sideX = -streamSin;
+        const sideZ = streamCos;
         for (let k = 0; k < SIDES; k++) {
           const a = k / SIDES * TAU;
           const u = Math.cos(a) * width;
@@ -350,10 +349,12 @@ export class CupRenderer3D {
         const p = (now / 1100 + i * 0.618 + bead * 0.5) % 1;
         const beadFlow = column[Math.floor(p * STEPS)]!;
         const profile = runoffProfile(p);
-        const size = THREE.MathUtils.smoothstep(beadFlow, 0.01, 0.14) * (0.009 + 0.004 * Math.sin(i * 3.7));
-        this.dummy.position.set(cos * (profile.radius + 0.004), profile.height + this.cupGroup.position.y,
-          sin * (profile.radius + 0.004));
-        this.dummy.rotation.set(0, -angle, 0);
+        const trail = runoffTrail(i, p, now, STREAMS);
+        const size = THREE.MathUtils.smoothstep(beadFlow, 0.01, 0.14)
+          * Math.min(1, trail.width * 3) * (0.012 + 0.005 * Math.sin(i * 3.7));
+        this.dummy.position.set(Math.cos(trail.angle) * (profile.radius + 0.004), profile.height + this.cupGroup.position.y,
+          Math.sin(trail.angle) * (profile.radius + 0.004));
+        this.dummy.rotation.set(0, -trail.angle, 0);
         this.dummy.scale.set(size * 0.5, size * 2.5, size);
         this.dummy.updateMatrix();
         this.runoffBeads.setMatrixAt(i * 2 + bead, this.dummy.matrix);
@@ -362,9 +363,10 @@ export class CupRenderer3D {
       if (emit && bottomFlow > 0.02 && (i + this.dropCursor) % 3 === 0) {
         const drop = this.drops[this.dropCursor++ % this.drops.length]!;
         const bottom = runoffProfile(1);
-        this.origin.set(cos * bottom.radius, bottom.height + this.cupGroup.position.y, sin * bottom.radius);
+        const endAngle = runoffTrail(i, 1, now, STREAMS).angle;
+        this.origin.set(Math.cos(endAngle) * bottom.radius, bottom.height + this.cupGroup.position.y, Math.sin(endAngle) * bottom.radius);
         drop.position.copy(this.origin);
-        drop.velocity.set(cos * 0.12, -0.65 - bottomFlow * 0.3, sin * 0.12);
+        drop.velocity.set(Math.cos(endAngle) * 0.12, -0.65 - bottomFlow * 0.3, Math.sin(endAngle) * 0.12);
         drop.life = 1.3;
         drop.size = (0.009 + Math.min(bottomFlow, 1) * 0.012) * (0.8 + 0.2 * Math.sin(this.dropCursor * 2.7));
       }
