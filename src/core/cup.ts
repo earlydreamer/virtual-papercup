@@ -73,6 +73,9 @@ export class Cup {
   readonly py: Float32Array;
   /** 이번 프레임의 경계별 넘침. 렌더러가 실제 유출 위치를 사용합니다. */
   readonly edgeOverflow: Float32Array;
+  /** 테두리에서 잘라내기 전의 초과 수두와 상승 속도. 유출 초기 속도에 사용합니다. */
+  readonly edgeHead: Float32Array;
+  readonly edgeRiseSpeed: Float32Array;
 
   /** 채움 비율에서 유도한 기준 수면 높이. 1 이면 컵이 가득. */
   /** 현재 물량 0..1. 넘치면 줄어든다. */
@@ -116,6 +119,8 @@ export class Cup {
     this.px = new Float32Array(len);
     this.py = new Float32Array(len);
     this.edgeOverflow = new Float32Array(len);
+    this.edgeHead = new Float32Array(len);
+    this.edgeRiseSpeed = new Float32Array(len);
 
     this.#fill = clamp01(this.cfg.fill);
     this.#base = 2 * this.#fill - 1;
@@ -158,6 +163,8 @@ export class Cup {
     this.overflowing = false;
     this.overflowIntensity = 0;
     this.edgeOverflow.fill(0);
+    this.edgeHead.fill(0);
+    this.edgeRiseSpeed.fill(0);
     this.spilledVolume = 0;
     this.#fill = clamp01(this.cfg.fill);
     this.#base = 2 * this.#fill - 1;
@@ -180,6 +187,8 @@ export class Cup {
     this.overflowing = false;
     this.overflowIntensity = 0;
     this.edgeOverflow.fill(0);
+    this.edgeHead.fill(0);
+    this.edgeRiseSpeed.fill(0);
   }
 
   /**
@@ -191,6 +200,8 @@ export class Cup {
     const total = Math.min(Math.max(dtMs, 0), MAX_FRAME_MS);
     if (total <= 0) return;
     this.edgeOverflow.fill(0);
+    this.edgeHead.fill(0);
+    this.edgeRiseSpeed.fill(0);
 
     const seconds = total / 1000;
 
@@ -199,8 +210,15 @@ export class Cup {
     // "평평"과 구분되지 않기 때문이다.
     if (tilt.overturned) {
       this.overflowIntensity = 1;
+      const gx = tilt.gravity?.x ?? tilt.x;
+      const gy = tilt.gravity?.y ?? tilt.y;
+      const horizontal = Math.hypot(gx, gy);
       for (let i = 0; i < this.edge.length; i++) {
-        if (this.edge[i]) this.edgeOverflow[i] = 1;
+        if (this.edge[i]) {
+          const facing = horizontal > 0.01 ? Math.max(0, (gx * this.px[i]! + gy * this.py[i]!) / horizontal) : 1;
+          this.edgeOverflow[i] = facing;
+          this.edgeHead[i] = facing * this.#fill;
+        }
       }
       if (!this.overflowing) {
         this.overflowing = true;
@@ -316,6 +334,8 @@ export class Cup {
           const overTarget = base + target - 1;
           const excess = Math.max(overH, overTarget);
           if (excess > 0) {
+            this.edgeHead[idx] = Math.max(this.edgeHead[idx]!, excess);
+            this.edgeRiseSpeed[idx] = Math.max(this.edgeRiseSpeed[idx]!, nv, 0);
             const norm = Math.min(excess / Math.max(ceil, 1e-6), 1);
             this.edgeOverflow[idx] = Math.max(this.edgeOverflow[idx]!, norm);
             if (norm > maxOverflow) maxOverflow = norm;

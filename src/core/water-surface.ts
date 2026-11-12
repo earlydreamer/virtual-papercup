@@ -22,12 +22,16 @@ export function sampleWaterLevel(cup: Cup, x: number, y: number): number {
 }
 
 /** 경계 칸의 각도를 유지해 물줄기의 출발 지점을 정합니다. */
-export function collectRimFlow(cup: Cup, sectors: Float32Array): void {
+export function collectRimFlow(cup: Cup, sectors: Float32Array, head?: Float32Array, rise?: Float32Array): void {
   sectors.fill(0);
+  head?.fill(0);
+  rise?.fill(0);
   for (let i = 0; i < cup.edge.length; i++) {
     if (!cup.edge[i] || cup.edgeOverflow[i]! <= 0) continue;
     const angle = Math.atan2(cup.py[i]!, cup.px[i]!);
     const sector = Math.round((angle / (2 * Math.PI) + 1) * sectors.length) % sectors.length;
     sectors[sector] = Math.max(sectors[sector]!, cup.edgeOverflow[i]!);
+    if (head) head[sector] = Math.max(head[sector]!, cup.edgeHead[i]!);
+    if (rise) rise[sector] = Math.max(rise[sector]!, cup.edgeRiseSpeed[i]!);
   }
 }

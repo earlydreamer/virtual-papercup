@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { Cup } from './core/cup.ts';
+import type { Tilt } from './core/types.ts';
+import { cupGravity, sampleSpillFlight, spillFlight } from './core/spill-flight.ts';
 import { collectRimFlow, sampleWaterLevel } from './core/water-surface.ts';
 import { advanceRunoff, runoffProfile, runoffTrail } from './runoff.ts';
 
@@ -35,6 +37,12 @@ export class CupRenderer3D {
   private readonly sheetGeometry = new THREE.BufferGeometry();
   private readonly sheetPositions = new Float32Array((STREAMS + 1) * (STEPS + 1) * 3);
   private readonly sheetColors = new Float32Array((STREAMS + 1) * (STEPS + 1) * 4);
+  private readonly jetGeometry = new THREE.BufferGeometry();
+  private readonly jetPositions = new Float32Array((STREAMS + 1) * (STEPS + 1) * 3);
+  private readonly jetColors = new Float32Array((STREAMS + 1) * (STEPS + 1) * 4);
+  private readonly jetAge = new Float32Array(STREAMS);
+  private readonly head = new Float32Array(STREAMS);
+  private readonly rise = new Float32Array(STREAMS);
   private readonly runoff = Array.from({ length: STREAMS }, () => new Float32Array(STEPS + 1));
   private readonly flow = new Float32Array(STREAMS);
   private readonly smoothFlow = new Float32Array(STREAMS);
@@ -46,6 +54,8 @@ export class CupRenderer3D {
   private readonly puddle: THREE.Mesh<THREE.CircleGeometry, THREE.MeshPhysicalMaterial>;
   private readonly dummy = new THREE.Object3D();
   private readonly origin = new THREE.Vector3();
+  private readonly dropDirection = new THREE.Vector3();
+  private readonly verticalAxis = new THREE.Vector3(0, 1, 0);
   private readonly environment: THREE.WebGLRenderTarget;
   private lastCup: Cup | null = null;
   private dropCursor = 0;
@@ -143,6 +153,17 @@ export class CupRenderer3D {
     const sheet = new THREE.Mesh(this.sheetGeometry, sheetMaterial);
     sheet.frustumCulled = false;
     this.scene.add(sheet);
+    this.jetGeometry.setAttribute('position', new THREE.BufferAttribute(this.jetPositions, 3).setUsage(THREE.DynamicDrawUsage));
+    this.jetGeometry.setAttribute('color', new THREE.BufferAttribute(this.jetColors, 4).setUsage(THREE.DynamicDrawUsage));
+    this.jetGeometry.setIndex(sheetIndices);
+    const jetMaterial = streamMaterial.clone();
+    jetMaterial.color.set('#85bdc6');
+    jetMaterial.opacity = 0.52;
+    jetMaterial.roughness = 0.035;
+    jetMaterial.vertexColors = true;
+    const jet = new THREE.Mesh(this.jetGeometry, jetMaterial);
+    jet.frustumCulled = false;
+    this.scene.add(jet);
     for (let i = 0; i < STREAMS; i++) {
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array((STEPS + 1) * SIDES * 3), 3).setUsage(THREE.DynamicDrawUsage));
@@ -258,10 +279,12 @@ export class CupRenderer3D {
     this.controls.update();
   }
 
-  render(cup: Cup, dtMs: number, now: number): void {
+  render(cup: Cup, dtMs: number, now: number, tilt: Tilt): void {
     const dt = Math.min(dtMs, 50) / 1000;
+    const gravity = cupGravity(tilt);
     if (this.lastCup !== cup) {
       this.smoothFlow.fill(0);
+      this.jetAge.fill(0);
       for (const column of this.runoff) column.fill(0);
       for (const drop of this.drops) drop.life = 0;
       this.wetness = 0;
@@ -290,7 +313,7 @@ export class CupRenderer3D {
     }
     this.waterGeometry.attributes.position!.needsUpdate = true;
     this.waterGeometry.computeVertexNormals();
-    collectRimFlow(cup, this.flow);
+    collectRimFlow(cup, this.flow, this.head, this.rise);
     this.emission += dt * 24;
     const emit = this.emission >= 1;
     if (emit) this.emission %= 1;
@@ -300,14 +323,32 @@ export class CupRenderer3D {
       this.smoothFlow[i] = flow;
       const mesh = this.streams[i]!;
       const column = this.runoff[i]!;
-      advanceRunoff(column, flow, dt);
-      mesh.visible = column.some(value => value > 0.015);
       const angle = i / STREAMS * TAU;
       const cos = Math.cos(angle);
       const sin = Math.sin(angle);
+      const flight = spillFlight(tilt, angle, this.head[i]!, this.rise[i]!);
+      const released = flow * flight.detached;
+      advanceRunoff(column, flow * (1 - flight.detached), dt);
+      mesh.visible = column.some(value => value > 0.015);
+      this.jetAge[i] = released > 0.005 ? this.jetAge[i]! + dt : 0;
+      const duration = Math.min(0.48, 2.2 / Math.max(1, Math.hypot(flight.velocity.x, flight.velocity.z)), this.jetAge[i]!);
       const positions = mesh.geometry.attributes.position as THREE.BufferAttribute;
       for (let j = 0; j <= STEPS; j++) {
         const p = j / STEPS;
+        const jetPoint = sampleSpillFlight(flight, angle, p * duration);
+        const jetIndex = (i * (STEPS + 1) + j) * 3;
+        const flutter = Math.sin(now / 85 - p * 24 + i * 1.7) * 0.008 * p * released;
+        this.jetPositions[jetIndex] = jetPoint.x - sin * flutter;
+        this.jetPositions[jetIndex + 1] = Math.max(FLOOR + 0.02, jetPoint.y + this.cupGroup.position.y
+          + Math.sin(now / 95 - p * 32 + i * 0.8) * 0.012 * p * released);
+        this.jetPositions[jetIndex + 2] = jetPoint.z + cos * flutter;
+        const jetColor = (i * (STEPS + 1) + j) * 4;
+        this.jetColors[jetColor] = 0.85;
+        this.jetColors[jetColor + 1] = 0.97;
+        this.jetColors[jetColor + 2] = 1;
+        const breakup = 1 - THREE.MathUtils.smoothstep(p, 0.35, 1)
+          * (0.45 + 0.45 * Math.sin(i * 2.3 + now / 230 - p * 13));
+        this.jetColors[jetColor + 3] = Math.min(1, released * 3) * (1 - p * p * 0.85) * breakup;
         const localFlow = column[j]!;
         const coverage = THREE.MathUtils.smoothstep(localFlow, 0.004, 0.12);
         const profile = runoffProfile(p);
@@ -360,6 +401,17 @@ export class CupRenderer3D {
         this.runoffBeads.setMatrixAt(i * 2 + bead, this.dummy.matrix);
       }
       const bottomFlow = column[STEPS]!;
+      if (emit && released > 0.02 && Math.sin(now / 43 + i * 9.3) > 0 && duration > 0.03) {
+        const drop = this.drops[this.dropCursor++ % this.drops.length]!;
+        const point = sampleSpillFlight(flight, angle, duration);
+        drop.position.set(point.x, point.y + this.cupGroup.position.y, point.z);
+        drop.velocity.set(flight.velocity.x + gravity.x * duration,
+          flight.velocity.y + gravity.y * duration, flight.velocity.z + gravity.z * duration);
+        drop.velocity.x += Math.sin(this.dropCursor * 2.4) * 0.08;
+        drop.velocity.z += Math.cos(this.dropCursor * 1.7) * 0.08;
+        drop.life = 1.8;
+        drop.size = (0.014 + Math.sqrt(released) * 0.024) * (0.8 + 0.2 * Math.sin(this.dropCursor * 2.7));
+      }
       if (emit && bottomFlow > 0.02 && (i + this.dropCursor) % 3 === 0) {
         const drop = this.drops[this.dropCursor++ % this.drops.length]!;
         const bottom = runoffProfile(1);
@@ -376,13 +428,20 @@ export class CupRenderer3D {
     this.sheetGeometry.attributes.position!.needsUpdate = true;
     this.sheetGeometry.attributes.color!.needsUpdate = true;
     this.sheetGeometry.computeVertexNormals();
+    this.jetPositions.copyWithin(STREAMS * (STEPS + 1) * 3, 0, (STEPS + 1) * 3);
+    this.jetColors.copyWithin(STREAMS * (STEPS + 1) * 4, 0, (STEPS + 1) * 4);
+    this.jetGeometry.attributes.position!.needsUpdate = true;
+    this.jetGeometry.attributes.color!.needsUpdate = true;
+    this.jetGeometry.computeVertexNormals();
     this.runoffBeads.instanceMatrix.needsUpdate = true;
     this.dummy.rotation.set(0, 0, 0);
     for (let i = 0; i < this.drops.length; i++) {
       const drop = this.drops[i]!;
       if (drop.life > 0) {
         drop.life -= dt;
-        drop.velocity.y -= 9.8 * dt;
+        drop.velocity.x += gravity.x * dt;
+        drop.velocity.y += gravity.y * dt;
+        drop.velocity.z += gravity.z * dt;
         drop.position.addScaledVector(drop.velocity, dt);
         if (drop.position.y < FLOOR + drop.size) {
           this.wetness = Math.min(1, this.wetness + 0.004);
@@ -397,7 +456,9 @@ export class CupRenderer3D {
       }
       this.dummy.position.copy(drop.position);
       const size = drop.life > 0 ? drop.size : 0;
-      this.dummy.scale.set(size, size * (1 + Math.abs(drop.velocity.y) * 0.10), size);
+      const speed = drop.velocity.length();
+      if (speed > 0.001) this.dummy.quaternion.setFromUnitVectors(this.verticalAxis, this.dropDirection.copy(drop.velocity).divideScalar(speed));
+      this.dummy.scale.set(size, size * (1 + speed * 0.10), size);
       this.dummy.updateMatrix();
       this.dropMesh.setMatrixAt(i, this.dummy.matrix);
     }
