@@ -164,7 +164,7 @@ export class CupRenderer3D {
     this.scene.add(this.runoffBeads);
 
     this.controls = new OrbitControls(this.camera, canvas);
-    this.controls.target.set(0, -0.55, 0);
+    this.controls.target.set(0, -0.9, 0);
     this.controls.enablePan = false;
     this.controls.enableZoom = false;
     this.controls.enableDamping = false;
@@ -220,7 +220,7 @@ export class CupRenderer3D {
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / Math.max(height, 1);
     // 세로 화면에서도 컵과 양옆 물줄기를 담습니다.
-    const distance = this.camera.aspect < 0.8 ? 11.8 / Math.max(this.camera.aspect / 0.65, 0.55) : 7.9;
+    const distance = this.camera.aspect < 0.8 ? 14 / Math.max(this.camera.aspect / 0.65, 0.55) : 10.8;
     this.homePosition.set(0, distance * 0.72, distance * 0.72);
     if (this.viewReady) {
       // 화면 회전·모드 전환 때 직접 고른 방위각과 고도를 보존합니다.

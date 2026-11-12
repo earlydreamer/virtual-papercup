@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { HISTORY, MAX_STREAMS, PARTICLES, LiquidStream, parcelSection, streamRadius, streamSources } from '../src/core/liquid-stream.ts';
+import { FRAGMENT_SECONDS, HISTORY, MAX_STREAMS, PARTICLES, LiquidStream, parcelSection, streamRadius, streamSources } from '../src/core/liquid-stream.ts';
 import type { Source } from '../src/core/liquid-stream.ts';
 import { Cup } from '../src/core/cup.ts';
 import { collectRimFlow } from '../src/core/water-surface.ts';
@@ -112,4 +112,36 @@ test('분리된 구간의 유량 순서가 바뀌어도 기존 궤적을 서로 
   assert.equal(sim.lanes[0]![0]!.angle, 0);
   assert.equal(sim.lanes[0]![0]!.chain, chainA);
   assert.equal(sim.lanes[1]![0]!.angle, Math.PI);
+});
+
+test('분열 구간에는 끊어진 목과 굵은 덩어리가 함께 남는다', () => {
+  const sim = new LiquidStream();
+  sim.update(tilt, [source()], 1 / 90);
+  const p = sim.lanes[0]![0]!;
+  const sections = Array.from({ length: 60 }, (_, i) => parcelSection({
+    ...p, age: p.breakupAge + FRAGMENT_SECONDS / 2, phase: i * 0.2,
+  }));
+  assert.ok(sections.some(s => s.pinched));
+  assert.ok(sections.some(s => !s.pinched && s.width > p.radius * 0.5));
+  assert.ok(sections.every(s => Number.isFinite(s.width) && Number.isFinite(s.depth)));
+});
+
+test('목이 끊긴 뒤 덩어리는 잠시 이동하다 원래 속도를 이어받은 작은 방울로 전환된다', () => {
+  const sim = new LiquidStream();
+  sim.update(tilt, [source()], 1 / 90);
+  const p = sim.lanes[0]![0]!;
+  p.age = p.breakupAge + FRAGMENT_SECONDS / 2;
+  sim.update(tilt, [], 1 / 90);
+  assert.ok(sim.lanes[0]!.includes(p));
+  assert.equal(sim.particles.filter(p => p.life > 0).length, 0);
+  p.age = p.breakupAge + FRAGMENT_SECONDS;
+  sim.update(tilt, [], 1 / 90);
+  assert.ok(!sim.lanes[0]!.includes(p));
+  const drops = sim.particles.filter(p => p.life > 0);
+  assert.ok(drops.length >= 1 && drops.length <= 2);
+  assert.ok(drops.some(p => !p.fine));
+  for (const drop of drops) {
+    assert.ok(Math.hypot(drop.velocity.x - p.velocity.x, drop.velocity.y - p.velocity.y, drop.velocity.z - p.velocity.z) < 0.3);
+    assert.ok(Math.hypot(drop.position.x - p.position.x, drop.position.y - p.position.y, drop.position.z - p.position.z) < p.radius);
+  }
 });
