@@ -99,6 +99,18 @@ body {
   font-size: 12px;
 }
 
+#btnResetView {
+  min-height: 44px;
+  margin: 0 16px 14px;
+  padding: 8px 14px;
+  border: 1px solid #ffffff30;
+  border-radius: 6px;
+  color: var(--fg);
+  background: #23313c;
+  font: inherit;
+  cursor: pointer;
+}
+
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
