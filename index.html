@@ -13,6 +13,17 @@
   <body>
     <main id="app">
       <canvas id="scene"></canvas>
+      <canvas id="scene3d" aria-label="기울기에 반응하는 3D 종이컵과 물" hidden></canvas>
+
+      <details class="view-options">
+        <summary>화면 옵션</summary>
+        <label for="renderMode">그래픽 모드</label>
+        <select id="renderMode">
+          <option value="3d" selected>3D · 입체 종이컵</option>
+          <option value="2d">2D · 기존 단면</option>
+        </select>
+        <p id="renderStatus" role="status">컵 안의 수면과 흘러내리는 물을 입체로 봅니다.</p>
+      </details>
 
       <header class="hud">
         <div class="chip">

@@ -3,6 +3,7 @@ import { calibrate, LowPassTilt, tiltAngleDeg, tiltFrom, GRAVITY } from './core/
 import type { Calibration } from './core/attitude.ts';
 import type { MotionSample, Tilt } from './core/types.ts';
 import { drawGauge, drawLevelDial, drawScene } from './render.ts';
+import type { CupRenderer3D } from './render-3d.ts';
 import {
   isMotionSupported,
   requestMotionPermission,
@@ -15,6 +16,12 @@ type Mode = 'idle' | 'leveling' | 'ready' | 'running' | 'stopped';
 
 const canvas = must<HTMLCanvasElement>('#scene');
 const ctx = context2d(canvas);
+const canvas3d = must<HTMLCanvasElement>('#scene3d');
+const renderMode = must<HTMLSelectElement>('#renderMode');
+const renderStatus = must<HTMLElement>('#renderStatus');
+let renderer3d: CupRenderer3D | null = null;
+let renderRequest = 0;
+let activeRenderMode: '2d' | '3d' = '2d';
 const gaugeCanvas = must<HTMLCanvasElement>('#gauge');
 const gctx = context2d(gaugeCanvas);
 const levelDial = must<HTMLCanvasElement>('#levelDial');
@@ -97,7 +104,50 @@ function resize(): void {
   canvas.width = Math.round(rect.width * dpr);
   canvas.height = Math.round(rect.height * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  renderer3d?.resize(rect.width, rect.height);
 }
+
+async function selectRenderMode(): Promise<void> {
+  const request = ++renderRequest;
+  const selected = renderMode.value;
+  if (selected === '3d') {
+    renderStatus.textContent = '3D 화면을 준비하고 있습니다…';
+    try {
+      const { CupRenderer3D } = await import('./render-3d.ts');
+      if (request !== renderRequest) return;
+      renderer3d ??= new CupRenderer3D(canvas3d);
+      resize();
+      activeRenderMode = '3d';
+      canvas3d.hidden = false;
+      renderStatus.textContent = '컵 안의 수면과 흘러내리는 물을 입체로 봅니다.';
+    } catch {
+      if (request !== renderRequest) return;
+      fallbackTo2d('이 환경에서는 3D 화면을 열 수 없어 2D로 표시합니다.');
+    }
+  } else {
+    activeRenderMode = '2d';
+    canvas3d.hidden = true;
+    renderStatus.textContent = '기존 종이컵 단면으로 봅니다.';
+  }
+  try { localStorage.setItem('papercup-render-mode', renderMode.value); } catch { /* 저장이 차단되어도 전환합니다. */ }
+}
+
+function fallbackTo2d(message: string): void {
+  renderRequest++;
+  activeRenderMode = '2d';
+  canvas3d.hidden = true;
+  renderMode.value = '2d';
+  renderStatus.textContent = message;
+  must<HTMLDetailsElement>('.view-options').open = true;
+  renderer3d?.dispose();
+  renderer3d = null;
+}
+
+canvas3d.addEventListener('webglcontextlost', (event) => {
+  event.preventDefault();
+  fallbackTo2d('3D 그래픽 연결이 끊겨 2D로 전환했습니다. 다시 3D를 선택할 수 있습니다.');
+});
+renderMode.addEventListener('change', () => { void selectRenderMode(); });
 
 function sceneSize(): { w: number; h: number } {
   const rect = canvas.getBoundingClientRect();
@@ -320,7 +370,16 @@ function frame(t: number): void {
   if (flash > 0) flash = Math.max(0, flash - dt / 420);
 
   const { w, h } = sceneSize();
-  drawScene({ ctx, w, h, cup, tilt: smoothed, flash, running: mode === 'running', now: t });
+  if (activeRenderMode === '3d' && renderer3d) {
+    try {
+      renderer3d.render(cup, smoothed, dt, t);
+    } catch {
+      fallbackTo2d('3D 화면을 표시하지 못해 2D로 전환했습니다.');
+    }
+  }
+  if (activeRenderMode === '2d') {
+    drawScene({ ctx, w, h, cup, tilt: smoothed, flash, running: mode === 'running', now: t });
+  }
 
   if (mode === 'running') {
     gaugeCanvas.style.opacity = '1';
@@ -347,16 +406,19 @@ function updatePointerTilt(e: PointerEvent): void {
   };
 }
 
-canvas.addEventListener('pointermove', (e) => {
-  if (mode !== 'running') return;
-  updatePointerTilt(e);
-});
-canvas.addEventListener('pointerleave', () => {
-  if (!sensorReady) pointerTilt = null;
-});
+for (const target of [canvas, canvas3d]) {
+  target.addEventListener('pointermove', (e) => {
+    if (mode !== 'running') return;
+    updatePointerTilt(e);
+  });
+  target.addEventListener('pointerleave', () => {
+    if (!sensorReady) pointerTilt = null;
+  });
+}
 
 window.addEventListener('keydown', (e) => {
   if (mode !== 'running' || sensorReady) return;
+  if (e.target instanceof HTMLElement && e.target.closest('input, select, button, summary')) return;
   const step = 0.12;
   const cur = pointerTilt ?? { x: 0, y: 0 };
   if (e.key === 'ArrowLeft') pointerTilt = { x: cur.x - step, y: cur.y };
@@ -364,6 +426,7 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === 'ArrowUp') pointerTilt = { x: cur.x, y: cur.y - step };
   else if (e.key === 'ArrowDown') pointerTilt = { x: cur.x, y: cur.y + step };
   else if (e.key === ' ') pointerTilt = { x: 0, y: 0 };
+  if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' '].includes(e.key)) e.preventDefault();
 });
 
 // 센서는 시작 전부터 구독해야 기준 설정에서 샘플을 모을 수 있다.
@@ -422,6 +485,10 @@ elFill.addEventListener('input', () => {
 window.addEventListener('resize', resize);
 
 resize();
+try {
+  if (localStorage.getItem('papercup-render-mode') === '2d') renderMode.value = '2d';
+} catch { /* 저장소가 없어도 기본 3D 모드를 사용합니다. */ }
+void selectRenderMode();
 elFillLabel.textContent = `${Math.round(Number(elFill.value))}%`;
 setState('대기');
 showCard('intro');
@@ -451,6 +518,7 @@ if (import.meta.env.DEV && params.has('card')) {
 }
 
 if (import.meta.env.DEV && params.has('auto')) {
+  if (params.has('keep')) cup = new Cup({ fill: fillRatio(), keepFill: true });
   calibration = calibrate([{ acc: { x: 0, y: 0, z: GRAVITY }, t: 0 }]);
   mode = 'running';
   runStart = performance.now();
