@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { HISTORY, LANES, PARTICLES, LiquidStream } from './core/liquid-stream.ts';
-const SIDES = 10;
+import { HISTORY, MAX_STREAMS, PARTICLES, LiquidStream, parcelSection } from './core/liquid-stream.ts';
+const SIDES = 24;
 const FLOOR = -1.65;
 
 /** 연속 단면 메시, 굴절 방울, 잔물보라를 각각 제한된 버퍼에 그립니다. */
@@ -19,13 +19,12 @@ export class PourRenderer {
   private readonly side = new THREE.Vector3();
   private readonly normal = new THREE.Vector3();
   private readonly up = new THREE.Vector3(0, 1, 0);
-  private readonly axis = new THREE.Vector3(0, 0, 1);
 
   constructor(scene: THREE.Scene) {
     const material = new THREE.MeshPhysicalMaterial({ color: '#eef8fa', roughness: 0.035,
       transmission: 1, opacity: 1, thickness: 0.13, ior: 1.333,
       attenuationColor: new THREE.Color('#b8e0df'), attenuationDistance: 3, envMapIntensity: 0.85 });
-    for (let i = 0; i < LANES; i++) {
+    for (let i = 0; i < MAX_STREAMS; i++) {
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(HISTORY * SIDES * 3), 3).setUsage(THREE.DynamicDrawUsage));
       geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(HISTORY * SIDES * 3), 3).setUsage(THREE.DynamicDrawUsage));
@@ -83,7 +82,7 @@ export class PourRenderer {
   }
 
   draw(dt: number, pixelHeight: number): void {
-    for (let i = 0; i < LANES; i++) {
+    for (let i = 0; i < MAX_STREAMS; i++) {
       const lane = this.simulation.lanes[i]!;
       const mesh = this.tubes[i]!;
       const positions = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
@@ -93,21 +92,28 @@ export class PourRenderer {
       for (let j = 0; j < lane.length; j++) {
         const p = lane[j]!;
         this.tangent.set(p.velocity.x, p.velocity.y, p.velocity.z).normalize();
-        this.side.crossVectors(this.tangent, Math.abs(this.tangent.y) < 0.95 ? this.up : this.axis).normalize();
+        this.side.set(-Math.sin(p.angle), 0, Math.cos(p.angle));
+        this.side.addScaledVector(this.tangent, -this.side.dot(this.tangent)).normalize();
         this.normal.crossVectors(this.side, this.tangent).normalize();
-        // 입구는 약간 납작하고, 아래쪽은 둥글어지면서 좁아집니다.
-        const aspect = 1 + 0.65 * Math.exp(-p.age * 18);
-        const neck = 1 - Math.min(0.24, p.age * 0.6) * (0.5 + 0.5 * Math.sin(p.age * 73 + i * 2.1));
+        const section = parcelSection(p);
         const tail = Math.min(1, (lane.length - 1 - j) / 3);
-        const radius = p.radius * neck * Math.sqrt(Math.max(0.02, tail));
+        const taper = Math.sqrt(Math.max(0.02, tail));
         for (let k = 0; k < SIDES; k++) {
           const angle = k / SIDES * Math.PI * 2;
           const c = Math.cos(angle), s = Math.sin(angle);
-          const dx = this.side.x * c * aspect + this.normal.x * s / aspect;
-          const dy = this.side.y * c * aspect + this.normal.y * s / aspect;
-          const dz = this.side.z * c * aspect + this.normal.z * s / aspect;
-          positions.setXYZ(j * SIDES + k, p.position.x + radius * dx, p.position.y + radius * dy, p.position.z + radius * dz);
-          this.dummy.position.copy(this.side).multiplyScalar(c / aspect).addScaledVector(this.normal, s * aspect).normalize();
+          // 처음에는 둥근 컵 테두리에 닿는 한 덩어리이며 짧은 거리에서 중앙으로 모입니다.
+          const curved = Math.sin(c * p.halfArc) / Math.max(0.001, Math.sin(p.halfArc));
+          const across = (c + (curved - c) * section.bend) * section.width;
+          const bend = (Math.cos(c * p.halfArc) - 1) * 1.025 * section.bend;
+          const lobe = 1 + section.breakup * 0.24 * Math.sin(angle * 3 + p.phase * 0.7);
+          const depth = s * section.depth * lobe;
+          const drift = Math.sin(p.phase * 0.37) * 0.035 * section.breakup;
+          positions.setXYZ(j * SIDES + k,
+            p.position.x + (this.side.x * (across + drift) + this.normal.x * depth + Math.cos(p.angle) * bend) * taper,
+            p.position.y + (this.side.y * across + this.normal.y * depth) * taper,
+            p.position.z + (this.side.z * (across + drift) + this.normal.z * depth + Math.sin(p.angle) * bend) * taper);
+          this.dummy.position.copy(this.side).multiplyScalar(c / Math.max(0.001, section.width))
+            .addScaledVector(this.normal, s / Math.max(0.001, section.depth)).normalize();
           normals.setXYZ(j * SIDES + k, this.dummy.position.x, this.dummy.position.y, this.dummy.position.z);
           if (j < lane.length - 1 && lane[j + 1]!.chain === p.chain) {
             const a = j * SIDES + k, b = j * SIDES + (k + 1) % SIDES;
