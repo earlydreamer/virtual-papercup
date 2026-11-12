@@ -3,8 +3,10 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { Cup } from './core/cup.ts';
 import type { Tilt } from './core/types.ts';
-import { cupGravity, sampleSpillFlight, spillFlight } from './core/spill-flight.ts';
+import { spillFlight } from './core/spill-flight.ts';
 import { collectRimFlow, sampleWaterLevel } from './core/water-surface.ts';
+import { streamSources } from './core/liquid-stream.ts';
+import { PourRenderer } from './render-pour.ts';
 import { advanceRunoff, runoffProfile, runoffTrail } from './runoff.ts';
 
 const TAU = Math.PI * 2;
@@ -14,13 +16,6 @@ const STREAMS = 40;
 const STEPS = 28;
 const SIDES = 7;
 const FLOOR = -1.65;
-
-interface Drop {
-  position: THREE.Vector3;
-  velocity: THREE.Vector3;
-  life: number;
-  size: number;
-}
 
 /** 컵 좌표의 높이장과 경계 유량을 조명·굴절·중력 궤적으로 표시합니다. */
 export class CupRenderer3D {
@@ -37,30 +32,21 @@ export class CupRenderer3D {
   private readonly sheetGeometry = new THREE.BufferGeometry();
   private readonly sheetPositions = new Float32Array((STREAMS + 1) * (STEPS + 1) * 3);
   private readonly sheetColors = new Float32Array((STREAMS + 1) * (STEPS + 1) * 4);
-  private readonly jetGeometry = new THREE.BufferGeometry();
-  private readonly jetPositions = new Float32Array((STREAMS + 1) * (STEPS + 1) * 3);
-  private readonly jetColors = new Float32Array((STREAMS + 1) * (STEPS + 1) * 4);
-  private readonly jetAge = new Float32Array(STREAMS);
   private readonly head = new Float32Array(STREAMS);
   private readonly rise = new Float32Array(STREAMS);
   private readonly runoff = Array.from({ length: STREAMS }, () => new Float32Array(STEPS + 1));
   private readonly flow = new Float32Array(STREAMS);
   private readonly smoothFlow = new Float32Array(STREAMS);
-  private readonly drops: Drop[] = Array.from({ length: 220 }, () => ({
-    position: new THREE.Vector3(), velocity: new THREE.Vector3(), life: 0, size: 0,
-  }));
-  private readonly dropMesh: THREE.InstancedMesh;
   private readonly runoffBeads: THREE.InstancedMesh;
-  private readonly puddle: THREE.Mesh<THREE.CircleGeometry, THREE.MeshPhysicalMaterial>;
+  private readonly pour: PourRenderer;
+  private lastSpilled = 0;
+  private lastTime = 0;
   private readonly dummy = new THREE.Object3D();
   private readonly origin = new THREE.Vector3();
-  private readonly dropDirection = new THREE.Vector3();
-  private readonly verticalAxis = new THREE.Vector3(0, 1, 0);
   private readonly environment: THREE.WebGLRenderTarget;
   private lastCup: Cup | null = null;
   private dropCursor = 0;
   private emission = 0;
-  private wetness = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -119,7 +105,7 @@ export class CupRenderer3D {
     this.waterGeometry.setAttribute('position', new THREE.BufferAttribute(this.waterPositions, 3).setUsage(THREE.DynamicDrawUsage));
     this.waterGeometry.setIndex(indices);
     const water = new THREE.MeshPhysicalMaterial({
-      color: '#93c6ce', roughness: 0.035, metalness: 0, transmission: 0.8,
+      color: '#d7e9eb', roughness: 0.035, metalness: 0, transmission: 0.94,
       thickness: 0.7, ior: 1.333, clearcoat: 1, clearcoatRoughness: 0.04,
       attenuationColor: new THREE.Color('#3e9ba8'), attenuationDistance: 1.6,
       side: THREE.DoubleSide, envMapIntensity: 1.25,
@@ -153,17 +139,7 @@ export class CupRenderer3D {
     const sheet = new THREE.Mesh(this.sheetGeometry, sheetMaterial);
     sheet.frustumCulled = false;
     this.scene.add(sheet);
-    this.jetGeometry.setAttribute('position', new THREE.BufferAttribute(this.jetPositions, 3).setUsage(THREE.DynamicDrawUsage));
-    this.jetGeometry.setAttribute('color', new THREE.BufferAttribute(this.jetColors, 4).setUsage(THREE.DynamicDrawUsage));
-    this.jetGeometry.setIndex(sheetIndices);
-    const jetMaterial = streamMaterial.clone();
-    jetMaterial.color.set('#85bdc6');
-    jetMaterial.opacity = 0.52;
-    jetMaterial.roughness = 0.035;
-    jetMaterial.vertexColors = true;
-    const jet = new THREE.Mesh(this.jetGeometry, jetMaterial);
-    jet.frustumCulled = false;
-    this.scene.add(jet);
+    this.pour = new PourRenderer(this.scene);
     for (let i = 0; i < STREAMS; i++) {
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array((STEPS + 1) * SIDES * 3), 3).setUsage(THREE.DynamicDrawUsage));
@@ -182,22 +158,10 @@ export class CupRenderer3D {
       this.streams.push(mesh);
       this.scene.add(mesh);
     }
-    this.dropMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 7, 5), streamMaterial, this.drops.length);
-    this.dropMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    this.dropMesh.frustumCulled = false;
-    this.scene.add(this.dropMesh);
     this.runoffBeads = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 7, 5), streamMaterial, STREAMS * 2);
     this.runoffBeads.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.runoffBeads.frustumCulled = false;
     this.scene.add(this.runoffBeads);
-
-    this.puddle = new THREE.Mesh(new THREE.CircleGeometry(1, 80), new THREE.MeshPhysicalMaterial({
-      color: '#1d3941', transparent: true, opacity: 0, roughness: 0.08,
-      metalness: 0.2, clearcoat: 1, depthWrite: false,
-    }));
-    this.puddle.rotation.x = -Math.PI / 2;
-    this.puddle.position.set(0, FLOOR + 0.012, 0);
-    this.scene.add(this.puddle);
 
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.target.set(0, -0.55, 0);
@@ -256,7 +220,7 @@ export class CupRenderer3D {
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / Math.max(height, 1);
     // 세로 화면에서도 컵과 양옆 물줄기를 담습니다.
-    const distance = this.camera.aspect < 0.8 ? 8.8 / Math.max(this.camera.aspect / 0.65, 0.55) : 7.9;
+    const distance = this.camera.aspect < 0.8 ? 11.8 / Math.max(this.camera.aspect / 0.65, 0.55) : 7.9;
     this.homePosition.set(0, distance * 0.72, distance * 0.72);
     if (this.viewReady) {
       // 화면 회전·모드 전환 때 직접 고른 방위각과 고도를 보존합니다.
@@ -281,13 +245,11 @@ export class CupRenderer3D {
 
   render(cup: Cup, dtMs: number, now: number, tilt: Tilt): void {
     const dt = Math.min(dtMs, 50) / 1000;
-    const gravity = cupGravity(tilt);
     if (this.lastCup !== cup) {
       this.smoothFlow.fill(0);
-      this.jetAge.fill(0);
+      this.pour.reset();
+      this.lastSpilled = cup.spilledVolume;
       for (const column of this.runoff) column.fill(0);
-      for (const drop of this.drops) drop.life = 0;
-      this.wetness = 0;
       this.lastCup = cup;
     }
     for (let r = 0; r <= RINGS; r++) {
@@ -314,6 +276,13 @@ export class CupRenderer3D {
     this.waterGeometry.attributes.position!.needsUpdate = true;
     this.waterGeometry.computeVertexNormals();
     collectRimFlow(cup, this.flow, this.head, this.rise);
+    if (now - this.lastTime > 250) this.pour.reset();
+    // 기존 높이 기반 손실량을 컵 체적과 시각 단면 계수로 환산합니다.
+    const volumeRate = now - this.lastTime < 100 && dt > 0
+      ? Math.max(0, cup.spilledVolume - this.lastSpilled) / dt * 4.58 * 0.4 : 0;
+    this.lastSpilled = cup.spilledVolume;
+    this.lastTime = now;
+    this.pour.simulation.update(tilt, streamSources(tilt, this.flow, this.head, this.rise, volumeRate), dt);
     this.emission += dt * 24;
     const emit = this.emission >= 1;
     if (emit) this.emission %= 1;
@@ -327,28 +296,11 @@ export class CupRenderer3D {
       const cos = Math.cos(angle);
       const sin = Math.sin(angle);
       const flight = spillFlight(tilt, angle, this.head[i]!, this.rise[i]!);
-      const released = flow * flight.detached;
       advanceRunoff(column, flow * (1 - flight.detached), dt);
       mesh.visible = column.some(value => value > 0.015);
-      this.jetAge[i] = released > 0.005 ? this.jetAge[i]! + dt : 0;
-      const duration = Math.min(0.48, 2.2 / Math.max(1, Math.hypot(flight.velocity.x, flight.velocity.z)), this.jetAge[i]!);
       const positions = mesh.geometry.attributes.position as THREE.BufferAttribute;
       for (let j = 0; j <= STEPS; j++) {
         const p = j / STEPS;
-        const jetPoint = sampleSpillFlight(flight, angle, p * duration);
-        const jetIndex = (i * (STEPS + 1) + j) * 3;
-        const flutter = Math.sin(now / 85 - p * 24 + i * 1.7) * 0.008 * p * released;
-        this.jetPositions[jetIndex] = jetPoint.x - sin * flutter;
-        this.jetPositions[jetIndex + 1] = Math.max(FLOOR + 0.02, jetPoint.y + this.cupGroup.position.y
-          + Math.sin(now / 95 - p * 32 + i * 0.8) * 0.012 * p * released);
-        this.jetPositions[jetIndex + 2] = jetPoint.z + cos * flutter;
-        const jetColor = (i * (STEPS + 1) + j) * 4;
-        this.jetColors[jetColor] = 0.85;
-        this.jetColors[jetColor + 1] = 0.97;
-        this.jetColors[jetColor + 2] = 1;
-        const breakup = 1 - THREE.MathUtils.smoothstep(p, 0.35, 1)
-          * (0.45 + 0.45 * Math.sin(i * 2.3 + now / 230 - p * 13));
-        this.jetColors[jetColor + 3] = Math.min(1, released * 3) * (1 - p * p * 0.85) * breakup;
         const localFlow = column[j]!;
         const coverage = THREE.MathUtils.smoothstep(localFlow, 0.004, 0.12);
         const profile = runoffProfile(p);
@@ -401,26 +353,14 @@ export class CupRenderer3D {
         this.runoffBeads.setMatrixAt(i * 2 + bead, this.dummy.matrix);
       }
       const bottomFlow = column[STEPS]!;
-      if (emit && released > 0.02 && Math.sin(now / 43 + i * 9.3) > 0 && duration > 0.03) {
-        const drop = this.drops[this.dropCursor++ % this.drops.length]!;
-        const point = sampleSpillFlight(flight, angle, duration);
-        drop.position.set(point.x, point.y + this.cupGroup.position.y, point.z);
-        drop.velocity.set(flight.velocity.x + gravity.x * duration,
-          flight.velocity.y + gravity.y * duration, flight.velocity.z + gravity.z * duration);
-        drop.velocity.x += Math.sin(this.dropCursor * 2.4) * 0.08;
-        drop.velocity.z += Math.cos(this.dropCursor * 1.7) * 0.08;
-        drop.life = 1.8;
-        drop.size = (0.014 + Math.sqrt(released) * 0.024) * (0.8 + 0.2 * Math.sin(this.dropCursor * 2.7));
-      }
       if (emit && bottomFlow > 0.02 && (i + this.dropCursor) % 3 === 0) {
-        const drop = this.drops[this.dropCursor++ % this.drops.length]!;
+        this.dropCursor++;
         const bottom = runoffProfile(1);
         const endAngle = runoffTrail(i, 1, now, STREAMS).angle;
         this.origin.set(Math.cos(endAngle) * bottom.radius, bottom.height + this.cupGroup.position.y, Math.sin(endAngle) * bottom.radius);
-        drop.position.copy(this.origin);
-        drop.velocity.set(Math.cos(endAngle) * 0.12, -0.65 - bottomFlow * 0.3, Math.sin(endAngle) * 0.12);
-        drop.life = 1.3;
-        drop.size = (0.009 + Math.min(bottomFlow, 1) * 0.012) * (0.8 + 0.2 * Math.sin(this.dropCursor * 2.7));
+        this.pour.simulation.emit(this.origin,
+          { x: Math.cos(endAngle) * 0.12, y: -0.65 - bottomFlow * 0.3, z: Math.sin(endAngle) * 0.12 },
+          0.005 + Math.min(bottomFlow, 1) * 0.007);
       }
     }
     this.sheetPositions.copyWithin(STREAMS * (STEPS + 1) * 3, 0, (STEPS + 1) * 3);
@@ -428,43 +368,8 @@ export class CupRenderer3D {
     this.sheetGeometry.attributes.position!.needsUpdate = true;
     this.sheetGeometry.attributes.color!.needsUpdate = true;
     this.sheetGeometry.computeVertexNormals();
-    this.jetPositions.copyWithin(STREAMS * (STEPS + 1) * 3, 0, (STEPS + 1) * 3);
-    this.jetColors.copyWithin(STREAMS * (STEPS + 1) * 4, 0, (STEPS + 1) * 4);
-    this.jetGeometry.attributes.position!.needsUpdate = true;
-    this.jetGeometry.attributes.color!.needsUpdate = true;
-    this.jetGeometry.computeVertexNormals();
     this.runoffBeads.instanceMatrix.needsUpdate = true;
-    this.dummy.rotation.set(0, 0, 0);
-    for (let i = 0; i < this.drops.length; i++) {
-      const drop = this.drops[i]!;
-      if (drop.life > 0) {
-        drop.life -= dt;
-        drop.velocity.x += gravity.x * dt;
-        drop.velocity.y += gravity.y * dt;
-        drop.velocity.z += gravity.z * dt;
-        drop.position.addScaledVector(drop.velocity, dt);
-        if (drop.position.y < FLOOR + drop.size) {
-          this.wetness = Math.min(1, this.wetness + 0.004);
-          if (drop.velocity.y < -0.8 && drop.life > 0.6) {
-            drop.position.y = FLOOR + drop.size;
-            drop.velocity.y *= -0.19;
-            drop.velocity.x *= 1.8;
-            drop.velocity.z *= 1.8;
-            drop.life = 0.35;
-          } else drop.life = 0;
-        }
-      }
-      this.dummy.position.copy(drop.position);
-      const size = drop.life > 0 ? drop.size : 0;
-      const speed = drop.velocity.length();
-      if (speed > 0.001) this.dummy.quaternion.setFromUnitVectors(this.verticalAxis, this.dropDirection.copy(drop.velocity).divideScalar(speed));
-      this.dummy.scale.set(size, size * (1 + speed * 0.10), size);
-      this.dummy.updateMatrix();
-      this.dropMesh.setMatrixAt(i, this.dummy.matrix);
-    }
-    this.dropMesh.instanceMatrix.needsUpdate = true;
-    this.puddle.scale.set(0.8 + this.wetness * 1.6, 0.6 + this.wetness * 1.3, 1);
-    this.puddle.material.opacity = this.wetness * 0.30;
+    this.pour.draw(dt, this.renderer.domElement.height);
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -472,7 +377,7 @@ export class CupRenderer3D {
     this.controls.dispose();
     const materials = new Set<THREE.Material>();
     this.scene.traverse((object) => {
-      if (!(object instanceof THREE.Mesh)) return;
+      if (!(object instanceof THREE.Mesh) && !(object instanceof THREE.Points)) return;
       object.geometry.dispose();
       for (const material of Array.isArray(object.material) ? object.material : [object.material]) materials.add(material);
     });
