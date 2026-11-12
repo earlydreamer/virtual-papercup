@@ -19,6 +19,7 @@ const ctx = context2d(canvas);
 const canvas3d = must<HTMLCanvasElement>('#scene3d');
 const renderMode = must<HTMLSelectElement>('#renderMode');
 const renderStatus = must<HTMLElement>('#renderStatus');
+const cameraOptions = must<HTMLElement>('#cameraOptions');
 let renderer3d: CupRenderer3D | null = null;
 let renderRequest = 0;
 let activeRenderMode: '2d' | '3d' = '2d';
@@ -119,6 +120,7 @@ async function selectRenderMode(): Promise<void> {
       resize();
       activeRenderMode = '3d';
       canvas3d.hidden = false;
+      cameraOptions.hidden = false;
       renderStatus.textContent = '컵 안의 수면과 흘러내리는 물을 입체로 봅니다.';
     } catch {
       if (request !== renderRequest) return;
@@ -127,6 +129,7 @@ async function selectRenderMode(): Promise<void> {
   } else {
     activeRenderMode = '2d';
     canvas3d.hidden = true;
+    cameraOptions.hidden = true;
     renderStatus.textContent = '기존 종이컵 단면으로 봅니다.';
   }
   try { localStorage.setItem('papercup-render-mode', renderMode.value); } catch { /* 저장이 차단되어도 전환합니다. */ }
@@ -136,6 +139,7 @@ function fallbackTo2d(message: string): void {
   renderRequest++;
   activeRenderMode = '2d';
   canvas3d.hidden = true;
+  cameraOptions.hidden = true;
   renderMode.value = '2d';
   renderStatus.textContent = message;
   must<HTMLDetailsElement>('.view-options').open = true;
@@ -148,6 +152,9 @@ canvas3d.addEventListener('webglcontextlost', (event) => {
   fallbackTo2d('3D 그래픽 연결이 끊겨 2D로 전환했습니다. 다시 3D를 선택할 수 있습니다.');
 });
 renderMode.addEventListener('change', () => { void selectRenderMode(); });
+must<HTMLButtonElement>('#btnResetView').addEventListener('click', () => {
+  renderer3d?.resetView();
+});
 
 function sceneSize(): { w: number; h: number } {
   const rect = canvas.getBoundingClientRect();
@@ -406,15 +413,14 @@ function updatePointerTilt(e: PointerEvent): void {
   };
 }
 
-for (const target of [canvas, canvas3d]) {
-  target.addEventListener('pointermove', (e) => {
-    if (mode !== 'running') return;
-    updatePointerTilt(e);
-  });
-  target.addEventListener('pointerleave', () => {
-    if (!sensorReady) pointerTilt = null;
-  });
-}
+// 3D 드래그는 카메라 전용입니다. 체험용 물 기울기는 방향키로 조작합니다.
+canvas.addEventListener('pointermove', (e) => {
+  if (mode !== 'running' || activeRenderMode !== '2d') return;
+  updatePointerTilt(e);
+});
+canvas.addEventListener('pointerleave', () => {
+  if (!sensorReady) pointerTilt = null;
+});
 
 window.addEventListener('keydown', (e) => {
   if (mode !== 'running' || sensorReady) return;

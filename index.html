@@ -13,7 +13,7 @@
   <body>
     <main id="app">
       <canvas id="scene"></canvas>
-      <canvas id="scene3d" aria-label="기울기에 반응하는 3D 종이컵과 물" hidden></canvas>
+      <canvas id="scene3d" tabindex="0" aria-label="기울기에 반응하는 3D 종이컵과 물" aria-describedby="cameraHint" hidden></canvas>
 
       <details class="view-options">
         <summary>화면 옵션</summary>
@@ -23,6 +23,10 @@
           <option value="2d">2D · 기존 단면</option>
         </select>
         <p id="renderStatus" role="status">컵 안의 수면과 흘러내리는 물을 입체로 봅니다.</p>
+        <div id="cameraOptions" hidden>
+          <p id="cameraHint">한 손가락이나 마우스로 드래그하면 시점을 돌립니다. 센서 없이 물을 기울이려면 방향키를 사용하세요.</p>
+          <button id="btnResetView" type="button">시점 초기화</button>
+        </div>
       </details>
 
       <header class="hud">

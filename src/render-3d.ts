@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { Cup } from './core/cup.ts';
 import { collectRimFlow, sampleWaterLevel } from './core/water-surface.ts';
 
@@ -23,6 +24,9 @@ export class CupRenderer3D {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(36, 1, 0.1, 70);
+  private readonly controls: OrbitControls;
+  private readonly homePosition = new THREE.Vector3();
+  private viewReady = false;
   private readonly cupGroup = new THREE.Group();
   private readonly waterGeometry = new THREE.BufferGeometry();
   private readonly waterPositions = new Float32Array((RINGS + 1) * (SEGMENTS + 1) * 3);
@@ -88,7 +92,7 @@ export class CupRenderer3D {
     floor.receiveShadow = true;
     this.scene.add(floor);
     this.scene.add(this.cupGroup);
-    // 컵과 시점은 고정하고 센서 입력은 수면·넘침 계산에만 반영합니다.
+    // 컵은 고정하고 센서 입력은 수면·넘침 계산에만 반영합니다.
     this.cupGroup.position.y = FLOOR + 1 + 0.02;
     this.makeCup();
 
@@ -163,6 +167,16 @@ export class CupRenderer3D {
     this.puddle.rotation.x = -Math.PI / 2;
     this.puddle.position.set(0, FLOOR + 0.012, 0);
     this.scene.add(this.puddle);
+
+    this.controls = new OrbitControls(this.camera, canvas);
+    this.controls.target.set(0, -0.55, 0);
+    this.controls.enablePan = false;
+    this.controls.enableZoom = false;
+    this.controls.enableDamping = false;
+    this.controls.rotateSpeed = 0.6;
+    this.controls.minPolarAngle = 0.12;
+    this.controls.maxPolarAngle = Math.PI / 2 - 0.08;
+    this.controls.cursorStyle = 'grab';
   }
 
   private makeCup(): void {
@@ -212,9 +226,22 @@ export class CupRenderer3D {
     this.camera.aspect = width / Math.max(height, 1);
     // 세로 화면에서도 컵과 양옆 물줄기를 담습니다.
     const distance = this.camera.aspect < 0.8 ? 8.8 / Math.max(this.camera.aspect / 0.65, 0.55) : 7.9;
-    this.camera.position.set(0, distance * 0.72, distance * 0.72);
-    this.camera.lookAt(0, -0.55, 0);
+    this.homePosition.set(0, distance * 0.72, distance * 0.72);
+    if (this.viewReady) {
+      // 화면 회전·모드 전환 때 직접 고른 방위각과 고도를 보존합니다.
+      const radius = this.homePosition.distanceTo(this.controls.target);
+      this.camera.position.sub(this.controls.target).setLength(radius).add(this.controls.target);
+      this.controls.update();
+    } else {
+      this.resetView();
+      this.viewReady = true;
+    }
     this.camera.updateProjectionMatrix();
+  }
+
+  resetView(): void {
+    this.camera.position.copy(this.homePosition);
+    this.controls.update();
   }
 
   render(cup: Cup, dtMs: number, now: number): void {
@@ -343,6 +370,7 @@ export class CupRenderer3D {
   }
 
   dispose(): void {
+    this.controls.dispose();
     const materials = new Set<THREE.Material>();
     this.scene.traverse((object) => {
       if (!(object instanceof THREE.Mesh)) return;
