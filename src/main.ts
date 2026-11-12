@@ -2,6 +2,7 @@ import { Cup } from './core/cup.ts';
 import { calibrate, LowPassTilt, tiltAngleDeg, tiltFrom, GRAVITY } from './core/attitude.ts';
 import type { Calibration } from './core/attitude.ts';
 import type { MotionSample, Tilt } from './core/types.ts';
+import { sensorTiltToScene } from './scene-coordinates.ts';
 import { drawGauge, drawLevelDial, drawScene } from './render.ts';
 import type { CupRenderer3D } from './render-3d.ts';
 import {
@@ -297,7 +298,7 @@ function resetAll(): void {
 function tiltFromSensor(): Tilt {
   if (forcedTilt) return forcedTilt;
   if (sensorReady && calibration && lastSample) {
-    return tiltFrom(calibration, lastSample);
+    return sensorTiltToScene(tiltFrom(calibration, lastSample));
   }
   if (pointerTilt) return pointerTilt;
   return { x: 0, y: 0 };
