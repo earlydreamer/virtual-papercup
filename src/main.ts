@@ -384,7 +384,7 @@ function frame(t: number): void {
   const { w, h } = sceneSize();
   if (activeRenderMode === '3d' && renderer3d) {
     try {
-      renderer3d.render(cup, dt, t);
+      renderer3d.render(cup, dt, t, sceneTilt);
     } catch {
       fallbackTo2d('3D 화면을 표시하지 못해 2D로 전환했습니다.');
     }

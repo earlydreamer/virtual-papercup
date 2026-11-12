@@ -18,6 +18,8 @@ export interface Vec3 {
 export interface Tilt {
   x: number;
   y: number;
+  /** 보정된 컵 좌표의 유효 중력(m/s²). x·y는 원판 평면, z는 컵 입구 방향입니다. */
+  gravity?: Vec3;
   /**
    * 컵이 거의 뒤집혀 물이 남을 수 없는 상태.
    *
