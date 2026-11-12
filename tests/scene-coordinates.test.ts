@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { calibrate, GRAVITY, tiltFrom } from '../src/core/attitude.ts';
 import { Cup } from '../src/core/cup.ts';
 import { collectRimFlow, sampleWaterLevel } from '../src/core/water-surface.ts';
-import { sensorTiltToScene } from '../src/scene-coordinates.ts';
+import { rotateTiltByYaw, sensorTiltToScene } from '../src/scene-coordinates.ts';
 
 const sample = (x: number, y: number, z: number) => ({ acc: { x, y, z }, t: 0 });
 const flat = calibrate([sample(0, 0, GRAVITY)]);
@@ -42,3 +42,32 @@ test('좌표 변환은 원본과 뒤집힘 판정을 보존한다', () => {
   assert.deepEqual(sensorTiltToScene(original), { x: 0.2, y: -0.4, overturned: true });
   assert.deepEqual(original, { x: 0.2, y: 0.4, overturned: true });
 });
+
+test('시점의 수평 회전은 화면 기준 방향과 기울기 크기·뒤집힘을 보존한다', () => {
+  const input = { x: 0.4, y: -0.7, overturned: true };
+  for (const yaw of [0, Math.PI / 2, Math.PI, -Math.PI / 2, 0.73]) {
+    const scene = rotateTiltByYaw(input, yaw);
+    // 수평면에서 카메라의 오른쪽·가까운 쪽으로 재투영합니다.
+    const right = scene.x * Math.cos(yaw) - scene.y * Math.sin(yaw);
+    const near = scene.x * Math.sin(yaw) + scene.y * Math.cos(yaw);
+    assert.ok(Math.abs(right - input.x) < 1e-12);
+    assert.ok(Math.abs(near - input.y) < 1e-12);
+    assert.ok(Math.abs(Math.hypot(scene.x, scene.y) - Math.hypot(input.x, input.y)) < 1e-12);
+    assert.equal(scene.overturned, true);
+    const level = rotateTiltByYaw({ x: 0, y: 0 }, yaw);
+    assert.equal(Math.hypot(level.x, level.y), 0);
+  }
+  assert.deepEqual(input, { x: 0.4, y: -0.7, overturned: true });
+});
+
+for (const [yaw, sector] of [[0, 0], [Math.PI / 2, 30], [Math.PI, 20], [-Math.PI / 2, 10]] as const) {
+  test(`시점 방위각 ${yaw}에서도 폰 오른쪽을 낮추면 보는 방향의 오른쪽으로 넘친다`, () => {
+    const tilt = rotateTiltByYaw(sensorTiltToScene(tiltFrom(flat, sample(-s, 0, c))), yaw);
+    const cup = new Cup({ keepFill: true });
+    for (let i = 0; i < 90; i++) cup.step(tilt, 16);
+    const flow = new Float32Array(40);
+    collectRimFlow(cup, flow);
+    assert.ok(flow[sector]! > 0.1);
+    assert.equal(flow[(sector + 20) % 40], 0);
+  });
+}
