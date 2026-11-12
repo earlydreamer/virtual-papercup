@@ -5,7 +5,9 @@ import { cupGravity, spillFlight } from './spill-flight.ts';
 export const MAX_STREAMS = 4;
 export const HISTORY = 72;
 export const PARTICLES = 900;
-export const FRAGMENT_SECONDS = 0.12;
+// 높이 2인 장면의 컵을 10cm로 봅니다. 정규화 궤적의 시간만 실제 크기에 맞춥니다.
+export const METERS_PER_UNIT = 0.05;
+export const FLIGHT_TIME_SCALE = 1 / Math.sqrt(METERS_PER_UNIT);
 const STEP = 1 / 90;
 const FLOOR = -1.65;
 const TAU = Math.PI * 2;
@@ -14,6 +16,12 @@ export interface Parcel { position: Vec3; velocity: Vec3; age: number; volume: n
 export interface Particle { position: Vec3; velocity: Vec3; life: number; duration: number; size: number; fine: boolean }
 export interface Impact { x: number; z: number; strength: number }
 const vec = (): Vec3 => ({ x: 0, y: 0, z: 0 });
+
+/** 분리 직후의 변형이 감쇠하며 둥글어집니다. 이동 속도로 방울을 늘이지 않습니다. */
+export function particleStretch(p: Particle): number {
+  const age = p.duration - p.life;
+  return 1 + Math.exp(-age / 0.1) * (0.38 + 0.12 * Math.cos(age * 38));
+}
 
 /** Q = 면적 × 속도. 물줄기가 빨라지면 단면이 좁아집니다. */
 export function streamRadius(rate: number, speed: number): number {
@@ -67,9 +75,8 @@ export function parcelSection(p: Parcel): { width: number; depth: number; bend: 
   const breakup = Math.max(0, Math.min(1, (p.age / p.breakupAge - 0.58) / 0.42));
   const ripple = Math.sin(p.phase + p.age * 17) * 0.11 + Math.sin(p.phase * 0.43 - p.age * 29) * 0.07;
   const instability = 0.5 + 0.5 * Math.sin(p.phase * 1.7 + Math.sin(p.phase * 0.31) * 0.45);
-  const fragment = Math.max(0, Math.min(1, (p.age - p.breakupAge) / FRAGMENT_SECONDS));
   const neck = (1 + ripple * Math.min(1, p.age * 12))
-    * (1 - breakup * (0.1 + 0.88 * instability)) * (1 - fragment * 0.3);
+    * (1 - breakup * (0.1 + 0.88 * instability));
   const pinched = breakup > 0.9 && instability > 0.86;
   const width = (p.radius + Math.max(0, Math.sin(p.halfArc) * 1.025 - p.radius) * gather) * neck;
   const depth = Math.max(0.006, p.radius * p.radius / Math.max(width, 0.01)) * neck * neck;
@@ -126,7 +133,7 @@ export class LiquidStream {
 
   update(tilt: Tilt, sources: Source[], seconds: number): void {
     this.impacts.length = 0;
-    this.accumulator += Math.min(Math.max(seconds, 0), 0.05);
+    this.accumulator += Math.min(Math.max(seconds, 0), 0.05) * FLIGHT_TIME_SCALE;
     const gravity = cupGravity(tilt);
     // 구간의 세기 순서가 바뀌어도 기존 궤적은 가까운 출발 구간에 연결합니다.
     const assigned: (Source | undefined)[] = Array(MAX_STREAMS);
@@ -163,7 +170,12 @@ export class LiquidStream {
           if (p.position.y <= FLOOR + p.radius) {
             this.impact(p.position, p.velocity, p.radius, true);
             lane.splice(j, 1);
-          } else if (p.age > p.breakupAge + FRAGMENT_SECONDS) {
+          }
+        }
+        // 첫 목이 끊어지면 그 뒤를 긴 튜브 조각으로 남기지 않습니다.
+        const cut = lane.findIndex(p => p.age >= p.breakupAge || parcelSection(p).pinched);
+        if (cut >= 0) {
+          for (const p of lane.splice(cut)) {
             // 작은 대표 입자로 분열을 표시합니다. 표시 입자의 부피 합은 실제 유출량과 별개입니다.
             for (let k = 0; k < 2; k++) {
               const fine = k === 1;
@@ -176,7 +188,6 @@ export class LiquidStream {
               this.emit({ x: p.position.x + dx, y: p.position.y + (this.random() - 0.5) * spread, z: p.position.z + dz },
                 { x: p.velocity.x + dx * 3, y: p.velocity.y + (this.random() - 0.5) * 0.2, z: p.velocity.z + dz * 3 }, size, fine);
             }
-            lane.splice(j, 1);
           }
         }
         const source = assigned[i];

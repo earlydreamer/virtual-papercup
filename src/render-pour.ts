@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { HISTORY, MAX_STREAMS, PARTICLES, LiquidStream, parcelSection } from './core/liquid-stream.ts';
+import { HISTORY, MAX_STREAMS, PARTICLES, LiquidStream, parcelSection, particleStretch } from './core/liquid-stream.ts';
 const SIDES = 24;
 const FLOOR = -1.65;
 
@@ -41,7 +41,7 @@ export class PourRenderer {
     dropMaterial.roughness = 0.1;
     dropMaterial.transmission = 0.98;
     dropMaterial.envMapIntensity = 0.55;
-    this.drops = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 10, 6), dropMaterial, PARTICLES);
+    this.drops = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 16, 10), dropMaterial, PARTICLES);
     this.drops.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.drops.frustumCulled = false;
     this.drops.count = 0;
@@ -163,7 +163,7 @@ export class PourRenderer {
       } else {
         this.dummy.position.set(p.position.x, p.position.y, p.position.z);
         this.tangent.set(p.velocity.x, p.velocity.y, p.velocity.z);
-        const stretch = 1 + Math.min(1.4, this.tangent.length() * 0.18);
+        const stretch = particleStretch(p);
         this.dummy.quaternion.setFromUnitVectors(this.up, this.tangent.normalize());
         const size = p.size * Math.sqrt(fade);
         this.dummy.scale.set(size / Math.sqrt(stretch), size * stretch, size / Math.sqrt(stretch));
