@@ -3,12 +3,13 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { Cup } from './core/cup.ts';
 import { collectRimFlow, sampleWaterLevel } from './core/water-surface.ts';
+import { advanceRunoff, runoffProfile } from './runoff.ts';
 
 const TAU = Math.PI * 2;
 const RINGS = 22;
 const SEGMENTS = 80;
 const STREAMS = 40;
-const STEPS = 18;
+const STEPS = 28;
 const SIDES = 7;
 const FLOOR = -1.65;
 
@@ -33,17 +34,18 @@ export class CupRenderer3D {
   private readonly streams: THREE.Mesh[] = [];
   private readonly sheetGeometry = new THREE.BufferGeometry();
   private readonly sheetPositions = new Float32Array((STREAMS + 1) * (STEPS + 1) * 3);
+  private readonly sheetColors = new Float32Array((STREAMS + 1) * (STEPS + 1) * 4);
+  private readonly runoff = Array.from({ length: STREAMS }, () => new Float32Array(STEPS + 1));
   private readonly flow = new Float32Array(STREAMS);
   private readonly smoothFlow = new Float32Array(STREAMS);
   private readonly drops: Drop[] = Array.from({ length: 220 }, () => ({
     position: new THREE.Vector3(), velocity: new THREE.Vector3(), life: 0, size: 0,
   }));
   private readonly dropMesh: THREE.InstancedMesh;
+  private readonly runoffBeads: THREE.InstancedMesh;
   private readonly puddle: THREE.Mesh<THREE.CircleGeometry, THREE.MeshPhysicalMaterial>;
   private readonly dummy = new THREE.Object3D();
   private readonly origin = new THREE.Vector3();
-  private readonly velocity = new THREE.Vector3();
-  private readonly normal = new THREE.Vector3();
   private readonly environment: THREE.WebGLRenderTarget;
   private lastCup: Cup | null = null;
   private dropCursor = 0;
@@ -117,11 +119,12 @@ export class CupRenderer3D {
     this.cupGroup.add(surface);
 
     const streamMaterial = new THREE.MeshPhysicalMaterial({
-      color: '#7bb2bf', roughness: 0.10, metalness: 0,
-      transparent: true, opacity: 0.64, clearcoat: 1,
-      envMapIntensity: 1, side: THREE.DoubleSide,
+      color: '#b5d2da', roughness: 0.065, metalness: 0,
+      transparent: true, opacity: 0.64, clearcoat: 1, depthWrite: false,
+      envMapIntensity: 1.3, side: THREE.DoubleSide,
     });
     this.sheetGeometry.setAttribute('position', new THREE.BufferAttribute(this.sheetPositions, 3).setUsage(THREE.DynamicDrawUsage));
+    this.sheetGeometry.setAttribute('color', new THREE.BufferAttribute(this.sheetColors, 4).setUsage(THREE.DynamicDrawUsage));
     const sheetIndices: number[] = [];
     for (let i = 0; i < STREAMS; i++) {
       for (let j = 0; j < STEPS; j++) {
@@ -132,7 +135,10 @@ export class CupRenderer3D {
     }
     this.sheetGeometry.setIndex(sheetIndices);
     const sheetMaterial = streamMaterial.clone();
-    sheetMaterial.opacity = 0.42;
+    sheetMaterial.color.set('#78979c');
+    sheetMaterial.opacity = 0.36;
+    sheetMaterial.roughness = 0.16;
+    sheetMaterial.vertexColors = true;
     sheetMaterial.depthWrite = false;
     const sheet = new THREE.Mesh(this.sheetGeometry, sheetMaterial);
     sheet.frustumCulled = false;
@@ -159,6 +165,10 @@ export class CupRenderer3D {
     this.dropMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.dropMesh.frustumCulled = false;
     this.scene.add(this.dropMesh);
+    this.runoffBeads = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 7, 5), streamMaterial, STREAMS * 2);
+    this.runoffBeads.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.runoffBeads.frustumCulled = false;
+    this.scene.add(this.runoffBeads);
 
     this.puddle = new THREE.Mesh(new THREE.CircleGeometry(1, 80), new THREE.MeshPhysicalMaterial({
       color: '#1d3941', transparent: true, opacity: 0, roughness: 0.08,
@@ -252,6 +262,7 @@ export class CupRenderer3D {
     const dt = Math.min(dtMs, 50) / 1000;
     if (this.lastCup !== cup) {
       this.smoothFlow.fill(0);
+      for (const column of this.runoff) column.fill(0);
       for (const drop of this.drops) drop.life = 0;
       this.wetness = 0;
       this.lastCup = cup;
@@ -288,62 +299,83 @@ export class CupRenderer3D {
       const flow = this.smoothFlow[i]! + (this.flow[i]! - this.smoothFlow[i]!) * Math.min(1, dt * 18);
       this.smoothFlow[i] = flow;
       const mesh = this.streams[i]!;
-      mesh.visible = flow > 0.015 && i % 3 === 0;
+      const column = this.runoff[i]!;
+      advanceRunoff(column, flow, dt);
+      mesh.visible = column.some(value => value > 0.015) && i % 3 === 0;
       const angle = i / STREAMS * TAU;
       const cos = Math.cos(angle);
       const sin = Math.sin(angle);
-      this.origin.set(cos * 1.015, 1.015, sin * 1.015);
-      this.origin.add(this.cupGroup.position);
-      this.velocity.set(cos * (0.5 + flow), 0.06, sin * (0.5 + flow));
       const positions = mesh.geometry.attributes.position as THREE.BufferAttribute;
-      const duration = flow > 0.015 ? 0.20 + flow * 0.36 : 0;
       for (let j = 0; j <= STEPS; j++) {
-        const t = j / STEPS * duration;
-        const x = this.origin.x + this.velocity.x * t;
-        const y = this.origin.y + this.velocity.y * t - 4.9 * t * t;
-        const z = this.origin.z + this.velocity.z * t;
-        const width = (0.008 + flow * 0.018) * (1 - j / STEPS * 0.60)
-          * (1 + 0.14 * Math.sin(now / 65 - j * 0.9 + i));
-        // 테두리에서 한 장으로 이어진 물막이 아래쪽에서 가늘어집니다.
-        const sheetTime = t * 0.70;
+        const p = j / STEPS;
+        const localFlow = column[j]!;
+        const coverage = THREE.MathUtils.smoothstep(localFlow, 0.004, 0.12);
+        const profile = runoffProfile(p);
+        // 아래로 이동하는 잔물결과 가는 물길을 외벽 위에 겹칩니다.
+        const wave = Math.sin(p * 35 - now / 130 + i * 1.7);
+        const radius = profile.radius + wave * 0.0015 * coverage;
         const sheetIndex = (i * (STEPS + 1) + j) * 3;
-        const flutter = Math.sin(now / 100 - j * 0.7 + i * 1.3) * 0.008 * j / STEPS * flow;
-        this.sheetPositions[sheetIndex] = this.origin.x + this.velocity.x * sheetTime + cos * flutter;
-        this.sheetPositions[sheetIndex + 1] = Math.max(FLOOR + 0.016, this.origin.y + this.velocity.y * sheetTime - 4.9 * sheetTime * sheetTime);
-        this.sheetPositions[sheetIndex + 2] = this.origin.z + this.velocity.z * sheetTime + sin * flutter;
-        // 포물선의 접선에 직교하는 단면을 만듭니다.
-        const tangent = this.normal.set(this.velocity.x, this.velocity.y - 9.8 * t, this.velocity.z).normalize();
+        this.sheetPositions[sheetIndex] = cos * radius;
+        this.sheetPositions[sheetIndex + 1] = profile.height + this.cupGroup.position.y;
+        this.sheetPositions[sheetIndex + 2] = sin * radius;
+        const colorIndex = (i * (STEPS + 1) + j) * 4;
+        this.sheetColors[colorIndex] = 0.86;
+        this.sheetColors[colorIndex + 1] = 0.95;
+        this.sheetColors[colorIndex + 2] = 1;
+        this.sheetColors[colorIndex + 3] = coverage * (0.68 + wave * 0.12)
+          * (1 - p * 0.35 * (0.5 + 0.5 * Math.sin(i * 2.3)));
+        const bend = Math.sin(p * 8 + i * 2.7) * 0.014 * Math.sin(p * Math.PI);
+        const streamAngle = angle + bend;
+        const streamCos = Math.cos(streamAngle);
+        const streamSin = Math.sin(streamAngle);
+        const width = coverage * (0.008 + Math.min(localFlow, 1) * 0.025)
+          * (1 + wave * 0.18) * (1 - p * 0.25);
+        const x = streamCos * (radius + 0.003);
+        const y = profile.height + this.cupGroup.position.y;
+        const z = streamSin * (radius + 0.003);
+        // 가는 물길이 종이 표면에서 뜨지 않도록 단면의 두께를 줄입니다.
         const sideX = -sin;
         const sideZ = cos;
-        const crossX = tangent.y * sideZ;
-        const crossY = tangent.z * sideX - tangent.x * sideZ;
-        const crossZ = -tangent.y * sideX;
         for (let k = 0; k < SIDES; k++) {
           const a = k / SIDES * TAU;
           const u = Math.cos(a) * width;
-          const v = Math.sin(a) * width;
-          positions.setXYZ(j * SIDES + k, x + sideX * u + crossX * v,
-            Math.max(FLOOR + 0.015, y + crossY * v), z + sideZ * u + crossZ * v);
+          const v = Math.sin(a) * Math.min(width * 0.3, 0.004);
+          positions.setXYZ(j * SIDES + k, x + sideX * u + streamCos * v,
+            y, z + sideZ * u + streamSin * v);
         }
       }
       positions.needsUpdate = true;
       if (mesh.visible) mesh.geometry.computeVertexNormals();
-      if (emit && this.flow[i]! > 0.02 && i % 2 === 0) {
+      for (let bead = 0; bead < 2; bead++) {
+        const p = (now / 1100 + i * 0.618 + bead * 0.5) % 1;
+        const beadFlow = column[Math.floor(p * STEPS)]!;
+        const profile = runoffProfile(p);
+        const size = THREE.MathUtils.smoothstep(beadFlow, 0.01, 0.14) * (0.009 + 0.004 * Math.sin(i * 3.7));
+        this.dummy.position.set(cos * (profile.radius + 0.004), profile.height + this.cupGroup.position.y,
+          sin * (profile.radius + 0.004));
+        this.dummy.rotation.set(0, -angle, 0);
+        this.dummy.scale.set(size * 0.5, size * 2.5, size);
+        this.dummy.updateMatrix();
+        this.runoffBeads.setMatrixAt(i * 2 + bead, this.dummy.matrix);
+      }
+      const bottomFlow = column[STEPS]!;
+      if (emit && bottomFlow > 0.02 && (i + this.dropCursor) % 3 === 0) {
         const drop = this.drops[this.dropCursor++ % this.drops.length]!;
-        const t = duration;
-        drop.position.copy(this.origin).addScaledVector(this.velocity, t);
-        drop.position.y -= 4.9 * t * t;
-        drop.velocity.copy(this.velocity);
-        drop.velocity.x += Math.sin(this.dropCursor * 2.4) * 0.13;
-        drop.velocity.z += Math.cos(this.dropCursor * 1.7) * 0.13;
-        drop.velocity.y -= 9.8 * t;
+        const bottom = runoffProfile(1);
+        this.origin.set(cos * bottom.radius, bottom.height + this.cupGroup.position.y, sin * bottom.radius);
+        drop.position.copy(this.origin);
+        drop.velocity.set(cos * 0.12, -0.65 - bottomFlow * 0.3, sin * 0.12);
         drop.life = 1.3;
-        drop.size = (0.013 + flow * 0.018) * (0.7 + 0.3 * Math.sin(this.dropCursor * 2.7));
+        drop.size = (0.009 + Math.min(bottomFlow, 1) * 0.012) * (0.8 + 0.2 * Math.sin(this.dropCursor * 2.7));
       }
     }
     this.sheetPositions.copyWithin(STREAMS * (STEPS + 1) * 3, 0, (STEPS + 1) * 3);
+    this.sheetColors.copyWithin(STREAMS * (STEPS + 1) * 4, 0, (STEPS + 1) * 4);
     this.sheetGeometry.attributes.position!.needsUpdate = true;
+    this.sheetGeometry.attributes.color!.needsUpdate = true;
     this.sheetGeometry.computeVertexNormals();
+    this.runoffBeads.instanceMatrix.needsUpdate = true;
+    this.dummy.rotation.set(0, 0, 0);
     for (let i = 0; i < this.drops.length; i++) {
       const drop = this.drops[i]!;
       if (drop.life > 0) {
