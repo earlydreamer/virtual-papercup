@@ -5,6 +5,7 @@ import { cupGravity, spillFlight } from './spill-flight.ts';
 export const MAX_STREAMS = 4;
 export const HISTORY = 72;
 export const PARTICLES = 900;
+export const MAX_FRAGMENTS = 24;
 // 높이 2인 장면의 컵을 10cm로 봅니다. 정규화 궤적의 시간만 실제 크기에 맞춥니다.
 export const METERS_PER_UNIT = 0.05;
 export const FLIGHT_TIME_SCALE = 1 / Math.sqrt(METERS_PER_UNIT);
@@ -15,7 +16,31 @@ export interface Source { angle: number; halfArc: number; rate: number; velocity
 export interface Parcel { position: Vec3; velocity: Vec3; age: number; volume: number; radius: number; chain: number; phase: number; angle: number; halfArc: number; breakupAge: number }
 export interface Particle { position: Vec3; velocity: Vec3; life: number; duration: number; size: number; fine: boolean }
 export interface Impact { x: number; z: number; strength: number }
+export interface Fragment {
+  parcels: Parcel[]; start: number; end: number; origin: Vec3; position: Vec3; velocity: Vec3;
+  radius: number; age: number;
+}
 const vec = (): Vec3 => ({ x: 0, y: 0, z: 0 });
+
+export function fragmentRoundness(age: number): number {
+  const t = Math.max(0, Math.min(1, age / (0.045 * FLIGHT_TIME_SCALE)));
+  return t * t * (3 - 2 * t);
+}
+
+/** 연결 메시와 분리 메시가 동일한 표시 중심선을 사용합니다. */
+export function parcelCenter(lane: Parcel[], j: number): Vec3 {
+  const p = lane[j]!, center = vec();
+  let weight = 0;
+  for (let offset = -2; offset <= 2; offset++) {
+    const q = lane[j + offset];
+    if (!q || q.chain !== p.chain || (j === 0 && offset !== 0)) continue;
+    const w = offset === 0 ? 6 : Math.abs(offset) === 1 ? 4 : 1;
+    center.x += q.position.x * w; center.y += q.position.y * w; center.z += q.position.z * w;
+    weight += w;
+  }
+  center.x /= weight; center.y /= weight; center.z /= weight;
+  return center;
+}
 
 /** 분리 직후의 변형이 감쇠하며 둥글어집니다. 이동 속도로 방울을 늘이지 않습니다. */
 export function particleStretch(p: Particle): number {
@@ -80,7 +105,7 @@ export function parcelSection(p: Parcel): { width: number; depth: number; bend: 
   const pinched = breakup > 0.9 && instability > 0.86;
   const width = (p.radius + Math.max(0, Math.sin(p.halfArc) * 1.025 - p.radius) * gather) * neck;
   const depth = Math.max(0.006, p.radius * p.radius / Math.max(width, 0.01)) * neck * neck;
-  return { width: pinched ? 0.001 : width, depth: pinched ? 0.001 : depth, bend: gather, breakup, pinched };
+  return { width, depth, bend: gather, breakup, pinched };
 }
 
 /** 고정 시간 간격으로 방출된 물의 위치·속도를 보존하는 시각용 유출 모델입니다. */
@@ -88,6 +113,7 @@ export class LiquidStream {
   readonly lanes: Parcel[][] = Array.from({ length: MAX_STREAMS }, () => []);
   readonly particles: Particle[] = Array.from({ length: PARTICLES }, () => ({ position: vec(), velocity: vec(), life: 0, duration: 1, size: 0, fine: false }));
   readonly impacts: Impact[] = [];
+  readonly fragments: Fragment[] = [];
   private accumulator = 0;
   private cursor = 0;
   private seed = 731;
@@ -104,6 +130,7 @@ export class LiquidStream {
     this.lanes.forEach(lane => { lane.length = 0; });
     this.particles.forEach(p => { p.life = 0; });
     this.impacts.length = 0;
+    this.fragments.length = 0;
     this.accumulator = 0;
     this.active.fill(0);
     this.chains.fill(0);
@@ -131,6 +158,34 @@ export class LiquidStream {
     }
   }
 
+  private detach(lane: Parcel[], cut: number): void {
+    const parcels = lane.map(p => ({ ...p, position: { ...p.position }, velocity: { ...p.velocity } }));
+    // 길게 남은 꼬리는 짧은 이웃 덩어리로 나눕니다. 출생 시에는 원래 표면이 맞닿습니다.
+    for (let start = cut; start < lane.length;) {
+      let end = Math.min(lane.length, start + 6);
+      if (lane.length - end < 3) end = lane.length;
+      while (end > start + 1 && lane[end - 1]!.chain !== lane[start]!.chain) end--;
+      const origin = vec(), velocity = vec();
+      let volume = 0;
+      for (let j = start; j < end; j++) {
+        const p = lane[j]!, center = parcelCenter(lane, j), section = parcelSection(p);
+        const previous = parcelCenter(lane, Math.max(start, j - 1));
+        const length = Math.max(0.005, Math.hypot(center.x - previous.x, center.y - previous.y, center.z - previous.z));
+        const taperArea = Math.max(0.02, Math.min(1, (lane.length - 1 - j) / 3));
+        const v = Math.PI * section.width * section.depth * length * taperArea;
+        origin.x += center.x * v; origin.y += center.y * v; origin.z += center.z * v;
+        velocity.x += p.velocity.x * v; velocity.y += p.velocity.y * v; velocity.z += p.velocity.z * v;
+        volume += v;
+      }
+      for (const value of [origin, velocity]) { value.x /= volume; value.y /= volume; value.z /= volume; }
+      if (this.fragments.length === MAX_FRAGMENTS) this.fragments.shift();
+      this.fragments.push({ parcels, start, end, origin, position: { ...origin }, velocity,
+        radius: Math.cbrt(3 * volume / (4 * Math.PI)), age: 0 });
+      start = end;
+    }
+    lane.splice(cut);
+  }
+
   update(tilt: Tilt, sources: Source[], seconds: number): void {
     this.impacts.length = 0;
     this.accumulator += Math.min(Math.max(seconds, 0), 0.05) * FLIGHT_TIME_SCALE;
@@ -151,6 +206,15 @@ export class LiquidStream {
     while (this.accumulator + 1e-10 >= STEP) {
       this.accumulator = Math.max(0, this.accumulator - STEP);
       this.time += STEP;
+      for (let i = this.fragments.length - 1; i >= 0; i--) {
+        const f = this.fragments[i]!;
+        f.age += STEP;
+        this.advance(f.position, f.velocity, gravity);
+        if (f.position.y <= FLOOR + f.radius || f.age > 1.4) {
+          if (f.position.y <= FLOOR + f.radius) this.impact(f.position, f.velocity, f.radius, true);
+          this.fragments.splice(i, 1);
+        }
+      }
       for (const p of this.particles) {
         if (p.life <= 0) continue;
         p.life -= STEP;
@@ -172,24 +236,10 @@ export class LiquidStream {
             lane.splice(j, 1);
           }
         }
-        // 첫 목이 끊어지면 그 뒤를 긴 튜브 조각으로 남기지 않습니다.
-        const cut = lane.findIndex(p => p.age >= p.breakupAge || parcelSection(p).pinched);
-        if (cut >= 0) {
-          for (const p of lane.splice(cut)) {
-            // 작은 대표 입자로 분열을 표시합니다. 표시 입자의 부피 합은 실제 유출량과 별개입니다.
-            for (let k = 0; k < 2; k++) {
-              const fine = k === 1;
-              if (fine && this.random() > 0.3) continue;
-              const spread = p.radius * 0.9;
-              const across = (this.random() - 0.5) * spread;
-              const dx = -Math.sin(p.angle) * across;
-              const dz = Math.cos(p.angle) * across;
-              const size = fine ? 0.002 + this.random() * 0.004 : 0.006 + Math.pow(this.random(), 2) * Math.min(0.024, p.radius * 0.3);
-              this.emit({ x: p.position.x + dx, y: p.position.y + (this.random() - 0.5) * spread, z: p.position.z + dz },
-                { x: p.velocity.x + dx * 3, y: p.velocity.y + (this.random() - 0.5) * 0.2, z: p.velocity.z + dz * 3 }, size, fine);
-            }
-          }
-        }
+        // 표본마다 작은 입자로 바꾸지 않고, 가늘어진 목 뒤의 짧은 덩어리를 넘깁니다.
+        let cut = lane.findIndex(p => parcelSection(p).pinched);
+        if (cut < 0 && lane.length >= 4 && lane.at(-1)!.age > lane.at(-1)!.breakupAge * 1.3) cut = lane.length - 4;
+        if (cut >= 0 && lane.length - cut >= 4) this.detach(lane, cut);
         const source = assigned[i];
         if (!source || source.rate < 0.0003) { this.active[i] = 0; continue; }
         const position = { x: Math.cos(source.angle) * 1.025, y: 0.395, z: Math.sin(source.angle) * 1.025 };

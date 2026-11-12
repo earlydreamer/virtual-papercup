@@ -1,12 +1,15 @@
 import * as THREE from 'three';
-import { HISTORY, MAX_STREAMS, PARTICLES, LiquidStream, parcelSection, particleStretch } from './core/liquid-stream.ts';
+import { HISTORY, MAX_STREAMS, MAX_FRAGMENTS, PARTICLES, LiquidStream, parcelSection, parcelCenter, particleStretch, fragmentRoundness } from './core/liquid-stream.ts';
+import type { Fragment, Parcel } from './core/liquid-stream.ts';
 const SIDES = 24;
+export const FRAGMENT_RINGS = 18;
 const FLOOR = -1.65;
 
 /** 연속 단면 메시, 굴절 방울, 잔물보라를 각각 제한된 버퍼에 그립니다. */
 export class PourRenderer {
   readonly simulation = new LiquidStream();
   private readonly tubes: THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhysicalMaterial>[] = [];
+  private readonly fragments: THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhysicalMaterial>[] = [];
   private readonly drops: THREE.InstancedMesh;
   private readonly spray: THREE.Points<THREE.BufferGeometry, THREE.ShaderMaterial>;
   private readonly rings: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>[] = [];
@@ -19,21 +22,23 @@ export class PourRenderer {
   private readonly side = new THREE.Vector3();
   private readonly normal = new THREE.Vector3();
   private readonly centers = Array.from({ length: HISTORY }, () => new THREE.Vector3());
+  private readonly fragmentSource = new Float32Array(HISTORY * SIDES * 3);
   private readonly up = new THREE.Vector3(0, 1, 0);
 
   constructor(scene: THREE.Scene) {
     const material = new THREE.MeshPhysicalMaterial({ color: '#eef8fa', roughness: 0.035,
       transmission: 1, opacity: 1, thickness: 0.13, ior: 1.333,
       attenuationColor: new THREE.Color('#b8e0df'), attenuationDistance: 3, envMapIntensity: 0.85 });
-    for (let i = 0; i < MAX_STREAMS; i++) {
+    for (let i = 0; i < MAX_STREAMS + MAX_FRAGMENTS; i++) {
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(HISTORY * SIDES * 3), 3).setUsage(THREE.DynamicDrawUsage));
       geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(HISTORY * SIDES * 3), 3).setUsage(THREE.DynamicDrawUsage));
-      geometry.setIndex(new THREE.BufferAttribute(new Uint16Array((HISTORY - 1) * SIDES * 6), 1).setUsage(THREE.DynamicDrawUsage));
+      geometry.setIndex(new THREE.BufferAttribute(new Uint16Array((HISTORY + 1) * SIDES * 6), 1).setUsage(THREE.DynamicDrawUsage));
       geometry.setDrawRange(0, 0);
       const mesh = new THREE.Mesh(geometry, material);
       mesh.frustumCulled = false;
-      this.tubes.push(mesh);
+      if (i < MAX_STREAMS) this.tubes.push(mesh);
+      else { mesh.name = 'liquid-fragment'; mesh.visible = false; this.fragments.push(mesh); }
       scene.add(mesh);
     }
     const dropMaterial = material.clone();
@@ -82,72 +87,122 @@ export class PourRenderer {
     this.wet.forEach(p => { p.visible = false; p.material.opacity = 0; });
   }
 
+  private drawTube(mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhysicalMaterial>, lane: Parcel[], sourceOnly = false): void {
+    const positions = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
+    const indices = mesh.geometry.index!;
+    let count = 0;
+    // 프레임마다 바뀌는 입력이 90Hz 표본에 계단처럼 남지 않도록 표시 곡선만 보간합니다.
+    // 물리 위치와 입자 속도는 그대로 유지합니다.
+    for (let j = 0; j < lane.length; j++) {
+      const center = parcelCenter(lane, j);
+      this.centers[j]!.set(center.x, center.y, center.z);
+    }
+    for (let j = 0; j < lane.length; j++) {
+      const p = lane[j]!;
+      const center = this.centers[j]!;
+      const previous = lane[j - 1]?.chain === p.chain ? this.centers[j - 1]! : center;
+      const next = lane[j + 1];
+      const after = next?.chain === p.chain ? this.centers[j + 1]! : center;
+      // 방출 방향이 변하면 속도와 이력 곡선의 접선이 달라집니다.
+      // 실제 이웃 중심점을 따라 단면을 놓아 회전 중 면이 접히는 현상을 줄입니다.
+      this.tangent.subVectors(after, previous);
+      if (this.tangent.lengthSq() < 1e-8) this.tangent.set(p.velocity.x, p.velocity.y, p.velocity.z);
+      this.tangent.normalize();
+      this.side.set(-Math.sin(p.angle), 0, Math.cos(p.angle));
+      this.side.addScaledVector(this.tangent, -this.side.dot(this.tangent)).normalize();
+      this.normal.crossVectors(this.side, this.tangent).normalize();
+      const section = parcelSection(p);
+      const connected = next?.chain === p.chain;
+      const tail = Math.min(1, (lane.length - 1 - j) / 3);
+      const taper = Math.sqrt(Math.max(0.02, tail));
+      for (let k = 0; k < SIDES; k++) {
+        const angle = k / SIDES * Math.PI * 2;
+        const c = Math.cos(angle), s = Math.sin(angle);
+        // 처음에는 둥근 컵 테두리에 닿는 한 덩어리이며 짧은 거리에서 중앙으로 모입니다.
+        const curved = Math.sin(c * p.halfArc) / Math.max(0.001, Math.sin(p.halfArc));
+        const across = (c + (curved - c) * section.bend) * section.width;
+        const bend = (Math.cos(c * p.halfArc) - 1) * 1.025 * section.bend;
+        const lobe = 1 + section.breakup * 0.24 * Math.sin(angle * 3 + p.phase * 0.7);
+        const depth = s * section.depth * lobe;
+        const drift = Math.sin(p.phase * 0.37) * 0.035 * section.breakup;
+        positions.setXYZ(j * SIDES + k,
+          center.x + (this.side.x * (across + drift) + this.normal.x * depth + Math.cos(p.angle) * bend) * taper,
+          center.y + (this.side.y * across + this.normal.y * depth) * taper,
+          center.z + (this.side.z * (across + drift) + this.normal.z * depth + Math.sin(p.angle) * bend) * taper);
+        if (connected && !sourceOnly) {
+          const a = j * SIDES + k, b = j * SIDES + (k + 1) % SIDES;
+          indices.setX(count++, a); indices.setX(count++, a + SIDES); indices.setX(count++, b);
+          indices.setX(count++, b); indices.setX(count++, a + SIDES); indices.setX(count++, b + SIDES);
+        }
+      }
+    }
+    if (sourceOnly) return;
+    mesh.geometry.setDrawRange(0, count);
+    // 종료된 삼각형을 비워 법선 계산에 이전 프레임의 면이 섞이지 않게 합니다.
+    indices.array.fill(0, count);
+    positions.needsUpdate = indices.needsUpdate = true;
+    mesh.geometry.computeVertexNormals();
+  }
+
+  private drawFragment(mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhysicalMaterial>, f: Fragment): void {
+    this.drawTube(mesh, f.parcels, true);
+    const positions = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
+    const indices = mesh.geometry.index!;
+    this.fragmentSource.set(positions.array);
+    const start = parcelCenter(f.parcels, f.start), end = parcelCenter(f.parcels, f.end - 1);
+    this.tangent.set(end.x - start.x, end.y - start.y, end.z - start.z);
+    if (this.tangent.lengthSq() < 1e-8) this.tangent.set(f.velocity.x, f.velocity.y, f.velocity.z);
+    this.tangent.normalize();
+    const angle = f.parcels[f.start]!.angle;
+    this.side.set(-Math.sin(angle), 0, Math.cos(angle));
+    this.side.addScaledVector(this.tangent, -this.side.dot(this.tangent)).normalize();
+    this.normal.crossVectors(this.side, this.tangent).normalize();
+    const roundness = fragmentRoundness(f.age);
+    let count = 0;
+    // 원래 표면을 세로 방향으로 보간해 구형으로 수축할 때 면이 접히거나 각지지 않게 합니다.
+    for (let row = 0; row < FRAGMENT_RINGS; row++) {
+      const t = row / (FRAGMENT_RINGS - 1);
+      const sourceRow = f.start + t * (f.end - 1 - f.start);
+      const from = Math.floor(sourceRow), to = Math.min(f.end - 1, from + 1), blend = sourceRow - from;
+      const radial = Math.sin(t * Math.PI), axial = -Math.cos(t * Math.PI);
+      for (let k = 0; k < SIDES; k++) {
+        const c = Math.cos(k / SIDES * Math.PI * 2), sn = Math.sin(k / SIDES * Math.PI * 2);
+        const a = (from * SIDES + k) * 3, b = (to * SIDES + k) * 3;
+        const x = this.fragmentSource[a]! * (1 - blend) + this.fragmentSource[b]! * blend - f.origin.x;
+        const y = this.fragmentSource[a + 1]! * (1 - blend) + this.fragmentSource[b + 1]! * blend - f.origin.y;
+        const z = this.fragmentSource[a + 2]! * (1 - blend) + this.fragmentSource[b + 2]! * blend - f.origin.z;
+        positions.setXYZ(row * SIDES + k,
+          f.position.x + x * (1 - roundness) + f.radius * roundness * ((this.side.x * c + this.normal.x * sn) * radial + this.tangent.x * axial),
+          f.position.y + y * (1 - roundness) + f.radius * roundness * ((this.side.y * c + this.normal.y * sn) * radial + this.tangent.y * axial),
+          f.position.z + z * (1 - roundness) + f.radius * roundness * ((this.side.z * c + this.normal.z * sn) * radial + this.tangent.z * axial));
+        if (row < FRAGMENT_RINGS - 1) {
+          const v = row * SIDES + k, next = row * SIDES + (k + 1) % SIDES;
+          indices.setX(count++, v); indices.setX(count++, v + SIDES); indices.setX(count++, next);
+          indices.setX(count++, next); indices.setX(count++, v + SIDES); indices.setX(count++, next + SIDES);
+        }
+      }
+    }
+    for (const row of [0, FRAGMENT_RINGS - 1]) {
+      for (let k = 1; k < SIDES - 1; k++) {
+        const base = row * SIDES;
+        indices.setX(count++, base);
+        indices.setX(count++, base + (row === 0 ? k + 1 : k));
+        indices.setX(count++, base + (row === 0 ? k : k + 1));
+      }
+    }
+    indices.array.fill(0, count);
+    mesh.geometry.setDrawRange(0, count);
+    positions.needsUpdate = indices.needsUpdate = true;
+    mesh.geometry.computeVertexNormals();
+  }
+
   draw(dt: number, pixelHeight: number): void {
-    for (let i = 0; i < MAX_STREAMS; i++) {
-      const lane = this.simulation.lanes[i]!;
-      const mesh = this.tubes[i]!;
-      const positions = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
-      const indices = mesh.geometry.index!;
-      let count = 0;
-      // 프레임마다 바뀌는 입력이 90Hz 표본에 계단처럼 남지 않도록 표시 곡선만 보간합니다.
-      // 물리 위치와 입자 속도는 그대로 유지합니다.
-      for (let j = 0; j < lane.length; j++) {
-        const p = lane[j]!;
-        const center = this.centers[j]!.set(0, 0, 0);
-        let weight = 0;
-        for (let offset = -2; offset <= 2; offset++) {
-          const q = lane[j + offset];
-          if (!q || q.chain !== p.chain || (j === 0 && offset !== 0)) continue;
-          const w = offset === 0 ? 6 : Math.abs(offset) === 1 ? 4 : 1;
-          center.x += q.position.x * w; center.y += q.position.y * w; center.z += q.position.z * w;
-          weight += w;
-        }
-        center.divideScalar(weight);
-      }
-      for (let j = 0; j < lane.length; j++) {
-        const p = lane[j]!;
-        const center = this.centers[j]!;
-        const previous = lane[j - 1]?.chain === p.chain ? this.centers[j - 1]! : center;
-        const next = lane[j + 1];
-        const after = next?.chain === p.chain ? this.centers[j + 1]! : center;
-        // 방출 방향이 변하면 속도와 이력 곡선의 접선이 달라집니다.
-        // 실제 이웃 중심점을 따라 단면을 놓아 회전 중 면이 접히는 현상을 줄입니다.
-        this.tangent.subVectors(after, previous);
-        if (this.tangent.lengthSq() < 1e-8) this.tangent.set(p.velocity.x, p.velocity.y, p.velocity.z);
-        this.tangent.normalize();
-        this.side.set(-Math.sin(p.angle), 0, Math.cos(p.angle));
-        this.side.addScaledVector(this.tangent, -this.side.dot(this.tangent)).normalize();
-        this.normal.crossVectors(this.side, this.tangent).normalize();
-        const section = parcelSection(p);
-        const connected = next?.chain === p.chain && !(section.pinched && parcelSection(next).pinched);
-        const tail = Math.min(1, (lane.length - 1 - j) / 3);
-        const taper = Math.sqrt(Math.max(0.02, tail));
-        for (let k = 0; k < SIDES; k++) {
-          const angle = k / SIDES * Math.PI * 2;
-          const c = Math.cos(angle), s = Math.sin(angle);
-          // 처음에는 둥근 컵 테두리에 닿는 한 덩어리이며 짧은 거리에서 중앙으로 모입니다.
-          const curved = Math.sin(c * p.halfArc) / Math.max(0.001, Math.sin(p.halfArc));
-          const across = (c + (curved - c) * section.bend) * section.width;
-          const bend = (Math.cos(c * p.halfArc) - 1) * 1.025 * section.bend;
-          const lobe = 1 + section.breakup * 0.24 * Math.sin(angle * 3 + p.phase * 0.7);
-          const depth = s * section.depth * lobe;
-          const drift = Math.sin(p.phase * 0.37) * 0.035 * section.breakup;
-          positions.setXYZ(j * SIDES + k,
-            center.x + (this.side.x * (across + drift) + this.normal.x * depth + Math.cos(p.angle) * bend) * taper,
-            center.y + (this.side.y * across + this.normal.y * depth) * taper,
-            center.z + (this.side.z * (across + drift) + this.normal.z * depth + Math.sin(p.angle) * bend) * taper);
-          if (connected) {
-            const a = j * SIDES + k, b = j * SIDES + (k + 1) % SIDES;
-            indices.setX(count++, a); indices.setX(count++, a + SIDES); indices.setX(count++, b);
-            indices.setX(count++, b); indices.setX(count++, a + SIDES); indices.setX(count++, b + SIDES);
-          }
-        }
-      }
-      mesh.geometry.setDrawRange(0, count);
-      // 종료된 삼각형을 비워 법선 계산에 이전 프레임의 면이 섞이지 않게 합니다.
-      indices.array.fill(0, count);
-      positions.needsUpdate = indices.needsUpdate = true;
-      mesh.geometry.computeVertexNormals();
+    for (let i = 0; i < MAX_STREAMS; i++) this.drawTube(this.tubes[i]!, this.simulation.lanes[i]!);
+    for (let i = 0; i < MAX_FRAGMENTS; i++) {
+      const mesh = this.fragments[i]!, fragment = this.simulation.fragments[i];
+      mesh.visible = !!fragment;
+      if (fragment) this.drawFragment(mesh, fragment);
+      else { mesh.geometry.setDrawRange(0, 0); mesh.geometry.index!.array.fill(0); }
     }
     let drops = 0, fine = 0;
     const positions = this.spray.geometry.getAttribute('position') as THREE.BufferAttribute;
