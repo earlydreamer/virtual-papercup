@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import type { Cup } from './core/cup.ts';
-import type { Tilt } from './core/types.ts';
 import { collectRimFlow, sampleWaterLevel } from './core/water-surface.ts';
 
 const TAU = Math.PI * 2;
@@ -11,7 +10,6 @@ const STREAMS = 40;
 const STEPS = 18;
 const SIDES = 7;
 const FLOOR = -1.65;
-const UP = new THREE.Vector3(0, 1, 0);
 
 interface Drop {
   position: THREE.Vector3;
@@ -42,7 +40,6 @@ export class CupRenderer3D {
   private readonly origin = new THREE.Vector3();
   private readonly velocity = new THREE.Vector3();
   private readonly normal = new THREE.Vector3();
-  private readonly rotation = new THREE.Quaternion();
   private readonly environment: THREE.WebGLRenderTarget;
   private lastCup: Cup | null = null;
   private dropCursor = 0;
@@ -91,6 +88,8 @@ export class CupRenderer3D {
     floor.receiveShadow = true;
     this.scene.add(floor);
     this.scene.add(this.cupGroup);
+    // 컵과 시점은 고정하고 센서 입력은 수면·넘침 계산에만 반영합니다.
+    this.cupGroup.position.y = FLOOR + 1 + 0.02;
     this.makeCup();
 
     const indices: number[] = [];
@@ -211,14 +210,14 @@ export class CupRenderer3D {
   resize(width: number, height: number): void {
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / Math.max(height, 1);
-    // 세로 화면에서도 기울어진 컵과 양옆 물줄기를 담습니다.
+    // 세로 화면에서도 컵과 양옆 물줄기를 담습니다.
     const distance = this.camera.aspect < 0.8 ? 8.8 / Math.max(this.camera.aspect / 0.65, 0.55) : 7.9;
     this.camera.position.set(0, distance * 0.72, distance * 0.72);
     this.camera.lookAt(0, -0.55, 0);
     this.camera.updateProjectionMatrix();
   }
 
-  render(cup: Cup, tilt: Tilt, dtMs: number, now: number): void {
+  render(cup: Cup, dtMs: number, now: number): void {
     const dt = Math.min(dtMs, 50) / 1000;
     if (this.lastCup !== cup) {
       this.smoothFlow.fill(0);
@@ -226,15 +225,6 @@ export class CupRenderer3D {
       this.wetness = 0;
       this.lastCup = cup;
     }
-    this.normal.set(-tilt.x, 1, -tilt.y).normalize();
-    this.rotation.setFromUnitVectors(this.normal, UP);
-    if (tilt.overturned) this.rotation.setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI * 0.64);
-    this.cupGroup.quaternion.copy(this.rotation);
-    this.normal.copy(UP).applyQuaternion(this.rotation);
-    const horizontal = Math.hypot(this.normal.x, this.normal.z);
-    const lowest = Math.min(-this.normal.y - 0.735 * horizontal, this.normal.y - 1.03 * horizontal);
-    this.cupGroup.position.y = FLOOR - lowest + 0.02;
-
     for (let r = 0; r <= RINGS; r++) {
       const fraction = r / RINGS;
       for (let s = 0; s <= SEGMENTS; s++) {
@@ -271,9 +261,9 @@ export class CupRenderer3D {
       const angle = i / STREAMS * TAU;
       const cos = Math.cos(angle);
       const sin = Math.sin(angle);
-      this.origin.set(cos * 1.015, 1.015, sin * 1.015).applyQuaternion(this.rotation);
+      this.origin.set(cos * 1.015, 1.015, sin * 1.015);
       this.origin.add(this.cupGroup.position);
-      this.velocity.set(cos * (0.5 + flow), 0.06, sin * (0.5 + flow)).applyQuaternion(this.rotation);
+      this.velocity.set(cos * (0.5 + flow), 0.06, sin * (0.5 + flow));
       const positions = mesh.geometry.attributes.position as THREE.BufferAttribute;
       const duration = flow > 0.015 ? 0.20 + flow * 0.36 : 0;
       for (let j = 0; j <= STEPS; j++) {
