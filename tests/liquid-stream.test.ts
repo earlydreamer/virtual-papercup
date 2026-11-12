@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { FRAGMENT_SECONDS, HISTORY, MAX_STREAMS, PARTICLES, LiquidStream, parcelSection, streamRadius, streamSources } from '../src/core/liquid-stream.ts';
+import { FLIGHT_TIME_SCALE, METERS_PER_UNIT, HISTORY, MAX_STREAMS, PARTICLES, LiquidStream, parcelSection, particleStretch, streamRadius, streamSources } from '../src/core/liquid-stream.ts';
 import type { Source } from '../src/core/liquid-stream.ts';
 import { Cup } from '../src/core/cup.ts';
 import { collectRimFlow } from '../src/core/water-surface.ts';
@@ -29,7 +29,7 @@ test('기울기를 반전해도 이미 나온 물의 위치와 속도가 순간 
   sim.update(tilt, [source()], 0.05);
   const old = sim.lanes[0]![0]!;
   const x = old.position.x, vx = old.velocity.x;
-  sim.update({ x: -1, y: 0 }, [source(Math.PI)], 1 / 90);
+  sim.update({ x: -1, y: 0 }, [source(Math.PI)], 1 / 90 / FLIGHT_TIME_SCALE);
   assert.ok(old.position.x > x);
   assert.ok(old.velocity.x < vx);
   assert.ok(Math.abs(old.position.x - x) < 0.03);
@@ -114,34 +114,62 @@ test('분리된 구간의 유량 순서가 바뀌어도 기존 궤적을 서로 
   assert.equal(sim.lanes[1]![0]!.angle, Math.PI);
 });
 
-test('분열 구간에는 끊어진 목과 굵은 덩어리가 함께 남는다', () => {
+test('분열 직전에는 가는 목과 굵은 부분이 함께 존재한다', () => {
   const sim = new LiquidStream();
   sim.update(tilt, [source()], 1 / 90);
   const p = sim.lanes[0]![0]!;
   const sections = Array.from({ length: 60 }, (_, i) => parcelSection({
-    ...p, age: p.breakupAge + FRAGMENT_SECONDS / 2, phase: i * 0.2,
+    ...p, age: p.breakupAge * 0.99, phase: i * 0.2,
   }));
   assert.ok(sections.some(s => s.pinched));
   assert.ok(sections.some(s => !s.pinched && s.width > p.radius * 0.5));
   assert.ok(sections.every(s => Number.isFinite(s.width) && Number.isFinite(s.depth)));
 });
 
-test('목이 끊긴 뒤 덩어리는 잠시 이동하다 원래 속도를 이어받은 작은 방울로 전환된다', () => {
+test('목이 끊기면 뒤쪽 메시 전체가 원래 속도를 이어받는 독립 방울로 전환된다', () => {
   const sim = new LiquidStream();
-  sim.update(tilt, [source()], 1 / 90);
-  const p = sim.lanes[0]![0]!;
-  p.age = p.breakupAge + FRAGMENT_SECONDS / 2;
-  sim.update(tilt, [], 1 / 90);
-  assert.ok(sim.lanes[0]!.includes(p));
-  assert.equal(sim.particles.filter(p => p.life > 0).length, 0);
-  p.age = p.breakupAge + FRAGMENT_SECONDS;
-  sim.update(tilt, [], 1 / 90);
-  assert.ok(!sim.lanes[0]!.includes(p));
+  sim.update(tilt, [source()], 3 / 90 / FLIGHT_TIME_SCALE);
+  const [front, p, tail] = sim.lanes[0]!;
+  p!.age = p!.breakupAge;
+  sim.update(tilt, [], 1 / 90 / FLIGHT_TIME_SCALE);
+  assert.deepEqual(sim.lanes[0], [front]);
   const drops = sim.particles.filter(p => p.life > 0);
-  assert.ok(drops.length >= 1 && drops.length <= 2);
-  assert.ok(drops.some(p => !p.fine));
-  for (const drop of drops) {
-    assert.ok(Math.hypot(drop.velocity.x - p.velocity.x, drop.velocity.y - p.velocity.y, drop.velocity.z - p.velocity.z) < 0.3);
-    assert.ok(Math.hypot(drop.position.x - p.position.x, drop.position.y - p.position.y, drop.position.z - p.position.z) < p.radius);
+  assert.ok(drops.length >= 2 && drops.length <= 4);
+  assert.equal(drops.filter(p => !p.fine).length, 2);
+  for (const original of [p!, tail!]) {
+    assert.ok(drops.some(drop => Math.hypot(drop.velocity.x - original.velocity.x,
+      drop.velocity.y - original.velocity.y, drop.velocity.z - original.velocity.z) < 0.3
+      && Math.hypot(drop.position.x - original.position.x, drop.position.y - original.position.y,
+        drop.position.z - original.position.z) < original.radius));
   }
+});
+
+test('10cm 컵 기준 자유 낙하는 가속되며 약 0.14초 후 바닥에 닿는다', () => {
+  const sim = new LiquidStream();
+  sim.emit({ x: 0, y: 0.395, z: 0 }, { x: 0, y: 0, z: 0 }, 0.01);
+  const drop = sim.particles[0]!;
+  sim.update({ x: 0, y: 0 }, [], 0.05);
+  const firstFall = 0.395 - drop.position.y;
+  sim.update({ x: 0, y: 0 }, [], 0.05);
+  const secondFall = 0.395 - drop.position.y - firstFall;
+  assert.ok(secondFall > firstFall * 2.8);
+  const actualMeters = (0.395 - drop.position.y) * METERS_PER_UNIT;
+  assert.ok(Math.abs(actualMeters - 9.81 * 0.1 ** 2 / 2) < 0.002);
+  sim.update({ x: 0, y: 0 }, [], 0.03);
+  assert.ok(drop.life > 0);
+  sim.update({ x: 0, y: 0 }, [], 0.02);
+  assert.ok(drop.life <= 0);
+  assert.ok(sim.impacts.length > 0);
+});
+
+test('독립 방울은 빠르게 둥글어지고 빠른 속도에서도 길게 늘어나지 않는다', () => {
+  const sim = new LiquidStream();
+  sim.emit({ x: 0, y: 0.4, z: 0 }, { x: 20, y: -20, z: 0 }, 0.02);
+  const p = sim.particles[0]!;
+  assert.equal(particleStretch(p), 1.5);
+  p.life = p.duration - 0.06 * FLIGHT_TIME_SCALE;
+  assert.ok(particleStretch(p) < 1.04);
+  const rounded = particleStretch(p);
+  p.velocity.x *= 10;
+  assert.equal(particleStretch(p), rounded);
 });
