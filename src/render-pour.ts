@@ -1,0 +1,175 @@
+import * as THREE from 'three';
+import { HISTORY, LANES, PARTICLES, LiquidStream } from './core/liquid-stream.ts';
+const SIDES = 10;
+const FLOOR = -1.65;
+
+/** 연속 단면 메시, 굴절 방울, 잔물보라를 각각 제한된 버퍼에 그립니다. */
+export class PourRenderer {
+  readonly simulation = new LiquidStream();
+  private readonly tubes: THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhysicalMaterial>[] = [];
+  private readonly drops: THREE.InstancedMesh;
+  private readonly spray: THREE.Points<THREE.BufferGeometry, THREE.ShaderMaterial>;
+  private readonly rings: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>[] = [];
+  private readonly wet: THREE.Mesh<THREE.CircleGeometry, THREE.MeshPhysicalMaterial>[] = [];
+  private readonly ringAges = new Float32Array(20).fill(1);
+  private impactCursor = 0;
+  private wetCursor = 0;
+  private readonly dummy = new THREE.Object3D();
+  private readonly tangent = new THREE.Vector3();
+  private readonly side = new THREE.Vector3();
+  private readonly normal = new THREE.Vector3();
+  private readonly up = new THREE.Vector3(0, 1, 0);
+  private readonly axis = new THREE.Vector3(0, 0, 1);
+
+  constructor(scene: THREE.Scene) {
+    const material = new THREE.MeshPhysicalMaterial({ color: '#eef8fa', roughness: 0.035,
+      transmission: 1, opacity: 1, thickness: 0.13, ior: 1.333,
+      attenuationColor: new THREE.Color('#b8e0df'), attenuationDistance: 3, envMapIntensity: 0.85 });
+    for (let i = 0; i < LANES; i++) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(HISTORY * SIDES * 3), 3).setUsage(THREE.DynamicDrawUsage));
+      geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(HISTORY * SIDES * 3), 3).setUsage(THREE.DynamicDrawUsage));
+      geometry.setIndex(new THREE.BufferAttribute(new Uint16Array((HISTORY - 1) * SIDES * 6), 1).setUsage(THREE.DynamicDrawUsage));
+      geometry.setDrawRange(0, 0);
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.frustumCulled = false;
+      this.tubes.push(mesh);
+      scene.add(mesh);
+    }
+    const dropMaterial = material.clone();
+    dropMaterial.thickness = 0.018;
+    dropMaterial.roughness = 0.1;
+    dropMaterial.transmission = 0.98;
+    dropMaterial.envMapIntensity = 0.55;
+    this.drops = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 10, 6), dropMaterial, PARTICLES);
+    this.drops.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.drops.frustumCulled = false;
+    this.drops.count = 0;
+    scene.add(this.drops);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(PARTICLES * 3), 3).setUsage(THREE.DynamicDrawUsage));
+    geometry.setAttribute('size', new THREE.BufferAttribute(new Float32Array(PARTICLES), 1).setUsage(THREE.DynamicDrawUsage));
+    geometry.setAttribute('fade', new THREE.BufferAttribute(new Float32Array(PARTICLES), 1).setUsage(THREE.DynamicDrawUsage));
+    const sprayMaterial = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, uniforms: { pixelScale: { value: 500 } },
+      vertexShader: `attribute float size; attribute float fade; varying float vFade; uniform float pixelScale;
+        void main() { vec4 p = modelViewMatrix * vec4(position, 1.0); vFade = fade;
+          gl_PointSize = clamp(size * pixelScale / max(0.1, -p.z), 1.0, 3.2); gl_Position = projectionMatrix * p; }`,
+      fragmentShader: `varying float vFade;
+        void main() { vec2 p = (gl_PointCoord - 0.5) * 2.0; float r = dot(p,p);
+          if (r > 1.0) discard; float a = (1.0 - smoothstep(0.08, 1.0, r)) * vFade * 0.32;
+          gl_FragColor = vec4(vec3(0.62, 0.77, 0.79), a); }`,
+    });
+    this.spray = new THREE.Points(geometry, sprayMaterial);
+    this.spray.frustumCulled = false;
+    scene.add(this.spray);
+    for (let i = 0; i < 20; i++) {
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.94, 1, 40), new THREE.MeshBasicMaterial({ color: '#8faeb3', transparent: true, opacity: 0, depthWrite: false }));
+      ring.rotation.x = -Math.PI / 2;
+      this.rings.push(ring);
+      scene.add(ring);
+      const patch = new THREE.Mesh(new THREE.CircleGeometry(1, 32), new THREE.MeshPhysicalMaterial({ color: '#162f36', transparent: true, opacity: 0, roughness: 0.13, clearcoat: 0.8, depthWrite: false }));
+      patch.rotation.x = -Math.PI / 2;
+      patch.visible = false;
+      this.wet.push(patch);
+      scene.add(patch);
+    }
+  }
+
+  reset(): void {
+    this.simulation.reset();
+    this.ringAges.fill(1);
+    this.wet.forEach(p => { p.visible = false; p.material.opacity = 0; });
+  }
+
+  draw(dt: number, pixelHeight: number): void {
+    for (let i = 0; i < LANES; i++) {
+      const lane = this.simulation.lanes[i]!;
+      const mesh = this.tubes[i]!;
+      const positions = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
+      const normals = mesh.geometry.getAttribute('normal') as THREE.BufferAttribute;
+      const indices = mesh.geometry.index!;
+      let count = 0;
+      for (let j = 0; j < lane.length; j++) {
+        const p = lane[j]!;
+        this.tangent.set(p.velocity.x, p.velocity.y, p.velocity.z).normalize();
+        this.side.crossVectors(this.tangent, Math.abs(this.tangent.y) < 0.95 ? this.up : this.axis).normalize();
+        this.normal.crossVectors(this.side, this.tangent).normalize();
+        // 입구는 약간 납작하고, 아래쪽은 둥글어지면서 좁아집니다.
+        const aspect = 1 + 0.65 * Math.exp(-p.age * 18);
+        const neck = 1 - Math.min(0.24, p.age * 0.6) * (0.5 + 0.5 * Math.sin(p.age * 73 + i * 2.1));
+        const tail = Math.min(1, (lane.length - 1 - j) / 3);
+        const radius = p.radius * neck * Math.sqrt(Math.max(0.02, tail));
+        for (let k = 0; k < SIDES; k++) {
+          const angle = k / SIDES * Math.PI * 2;
+          const c = Math.cos(angle), s = Math.sin(angle);
+          const dx = this.side.x * c * aspect + this.normal.x * s / aspect;
+          const dy = this.side.y * c * aspect + this.normal.y * s / aspect;
+          const dz = this.side.z * c * aspect + this.normal.z * s / aspect;
+          positions.setXYZ(j * SIDES + k, p.position.x + radius * dx, p.position.y + radius * dy, p.position.z + radius * dz);
+          this.dummy.position.copy(this.side).multiplyScalar(c / aspect).addScaledVector(this.normal, s * aspect).normalize();
+          normals.setXYZ(j * SIDES + k, this.dummy.position.x, this.dummy.position.y, this.dummy.position.z);
+          if (j < lane.length - 1 && lane[j + 1]!.chain === p.chain) {
+            const a = j * SIDES + k, b = j * SIDES + (k + 1) % SIDES;
+            indices.setX(count++, a); indices.setX(count++, a + SIDES); indices.setX(count++, b);
+            indices.setX(count++, b); indices.setX(count++, a + SIDES); indices.setX(count++, b + SIDES);
+          }
+        }
+      }
+      mesh.geometry.setDrawRange(0, count);
+      positions.needsUpdate = normals.needsUpdate = indices.needsUpdate = true;
+    }
+    let drops = 0, fine = 0;
+    const positions = this.spray.geometry.getAttribute('position') as THREE.BufferAttribute;
+    const sizes = this.spray.geometry.getAttribute('size') as THREE.BufferAttribute;
+    const fades = this.spray.geometry.getAttribute('fade') as THREE.BufferAttribute;
+    for (const p of this.simulation.particles) {
+      if (p.life <= 0) continue;
+      const fade = Math.min(1, p.life / 0.12, (p.duration - p.life) / 0.025);
+      if (p.fine) {
+        positions.setXYZ(fine, p.position.x, p.position.y, p.position.z);
+        sizes.setX(fine, p.size * 2);
+        fades.setX(fine++, fade);
+      } else {
+        this.dummy.position.set(p.position.x, p.position.y, p.position.z);
+        this.tangent.set(p.velocity.x, p.velocity.y, p.velocity.z);
+        const stretch = 1 + Math.min(1.4, this.tangent.length() * 0.18);
+        this.dummy.quaternion.setFromUnitVectors(this.up, this.tangent.normalize());
+        const size = p.size * Math.sqrt(fade);
+        this.dummy.scale.set(size / Math.sqrt(stretch), size * stretch, size / Math.sqrt(stretch));
+        this.dummy.updateMatrix();
+        this.drops.setMatrixAt(drops++, this.dummy.matrix);
+      }
+    }
+    this.drops.count = drops;
+    this.drops.instanceMatrix.needsUpdate = true;
+    this.spray.geometry.setDrawRange(0, fine);
+    positions.needsUpdate = sizes.needsUpdate = fades.needsUpdate = true;
+    this.spray.material.uniforms.pixelScale!.value = pixelHeight * 1.5;
+    for (const impact of this.simulation.impacts) {
+      if (Math.hypot(impact.x, impact.z) > 7) continue;
+      let patch = this.wet.find(p => p.visible && Math.hypot(p.position.x - impact.x, p.position.z - impact.z) < 0.4);
+      if (!patch) {
+        patch = this.wet[this.wetCursor++ % this.wet.length]!;
+        patch.position.set(impact.x, FLOOR + 0.006, impact.z);
+        patch.scale.set(0.13, 0.1, 1);
+        patch.material.opacity = 0.1;
+        patch.visible = true;
+      }
+      patch.scale.x = Math.min(0.65, patch.scale.x + impact.strength * 0.05);
+      patch.scale.y = patch.scale.x * 0.8;
+      patch.material.opacity = Math.min(0.28, patch.material.opacity + 0.006);
+      if (impact.strength < 0.014) continue;
+      const idx = this.impactCursor++ % this.rings.length;
+      this.rings[idx]!.position.set(impact.x, FLOOR + 0.012, impact.z);
+      this.ringAges[idx] = 0;
+    }
+    for (let i = 0; i < this.rings.length; i++) {
+      this.ringAges[i]! += dt;
+      const age = this.ringAges[i]!;
+      const ring = this.rings[i]!;
+      ring.material.opacity = Math.max(0, 1 - age / 0.4) * 0.13;
+      ring.scale.setScalar(0.03 + age * 0.55);
+    }
+  }
+}
