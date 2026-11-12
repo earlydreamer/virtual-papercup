@@ -8,3 +8,14 @@ import type { Tilt } from './core/types.ts';
 export function sensorTiltToScene(tilt: Tilt): Tilt {
   return { ...tilt, y: -tilt.y };
 }
+
+/** 시점의 수평 방향만 반영합니다. 카메라 고도는 물 기울기에 관여하지 않습니다. */
+export function rotateTiltByYaw(tilt: Tilt, yaw: number): Tilt {
+  const cos = Math.cos(yaw);
+  const sin = Math.sin(yaw);
+  return {
+    ...tilt,
+    x: cos * tilt.x + sin * tilt.y,
+    y: -sin * tilt.x + cos * tilt.y,
+  };
+}

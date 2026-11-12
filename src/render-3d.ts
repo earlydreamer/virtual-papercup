@@ -239,6 +239,10 @@ export class CupRenderer3D {
     this.camera.updateProjectionMatrix();
   }
 
+  get viewAzimuth(): number {
+    return this.controls.getAzimuthalAngle();
+  }
+
   resetView(): void {
     this.camera.position.copy(this.homePosition);
     this.controls.update();

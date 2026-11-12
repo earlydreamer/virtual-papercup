@@ -2,7 +2,7 @@ import { Cup } from './core/cup.ts';
 import { calibrate, LowPassTilt, tiltAngleDeg, tiltFrom, GRAVITY } from './core/attitude.ts';
 import type { Calibration } from './core/attitude.ts';
 import type { MotionSample, Tilt } from './core/types.ts';
-import { sensorTiltToScene } from './scene-coordinates.ts';
+import { rotateTiltByYaw, sensorTiltToScene } from './scene-coordinates.ts';
 import { drawGauge, drawLevelDial, drawScene } from './render.ts';
 import type { CupRenderer3D } from './render-3d.ts';
 import {
@@ -360,7 +360,11 @@ function frame(t: number): void {
   } else {    smoothed = lp.push({ x: 0, y: 0 });
   }
 
-  cup.step(smoothed, dt);
+  // 입력의 크기·게이지는 유지하고, 3D에서는 시점의 수평 방향만 맞춥니다.
+  const sceneTilt = activeRenderMode === '3d' && renderer3d
+    ? rotateTiltByYaw(smoothed, renderer3d.viewAzimuth)
+    : smoothed;
+  cup.step(sceneTilt, dt);
 
   elWater.textContent = `${Math.round(cup.fill * 100)}%`;
 
