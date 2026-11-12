@@ -18,6 +18,7 @@ export class PourRenderer {
   private readonly tangent = new THREE.Vector3();
   private readonly side = new THREE.Vector3();
   private readonly normal = new THREE.Vector3();
+  private readonly centers = Array.from({ length: HISTORY }, () => new THREE.Vector3());
   private readonly up = new THREE.Vector3(0, 1, 0);
 
   constructor(scene: THREE.Scene) {
@@ -86,16 +87,39 @@ export class PourRenderer {
       const lane = this.simulation.lanes[i]!;
       const mesh = this.tubes[i]!;
       const positions = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
-      const normals = mesh.geometry.getAttribute('normal') as THREE.BufferAttribute;
       const indices = mesh.geometry.index!;
       let count = 0;
+      // 프레임마다 바뀌는 입력이 90Hz 표본에 계단처럼 남지 않도록 표시 곡선만 보간합니다.
+      // 물리 위치와 입자 속도는 그대로 유지합니다.
       for (let j = 0; j < lane.length; j++) {
         const p = lane[j]!;
-        this.tangent.set(p.velocity.x, p.velocity.y, p.velocity.z).normalize();
+        const center = this.centers[j]!.set(0, 0, 0);
+        let weight = 0;
+        for (let offset = -2; offset <= 2; offset++) {
+          const q = lane[j + offset];
+          if (!q || q.chain !== p.chain || (j === 0 && offset !== 0)) continue;
+          const w = offset === 0 ? 6 : Math.abs(offset) === 1 ? 4 : 1;
+          center.x += q.position.x * w; center.y += q.position.y * w; center.z += q.position.z * w;
+          weight += w;
+        }
+        center.divideScalar(weight);
+      }
+      for (let j = 0; j < lane.length; j++) {
+        const p = lane[j]!;
+        const center = this.centers[j]!;
+        const previous = lane[j - 1]?.chain === p.chain ? this.centers[j - 1]! : center;
+        const next = lane[j + 1];
+        const after = next?.chain === p.chain ? this.centers[j + 1]! : center;
+        // 방출 방향이 변하면 속도와 이력 곡선의 접선이 달라집니다.
+        // 실제 이웃 중심점을 따라 단면을 놓아 회전 중 면이 접히는 현상을 줄입니다.
+        this.tangent.subVectors(after, previous);
+        if (this.tangent.lengthSq() < 1e-8) this.tangent.set(p.velocity.x, p.velocity.y, p.velocity.z);
+        this.tangent.normalize();
         this.side.set(-Math.sin(p.angle), 0, Math.cos(p.angle));
         this.side.addScaledVector(this.tangent, -this.side.dot(this.tangent)).normalize();
         this.normal.crossVectors(this.side, this.tangent).normalize();
         const section = parcelSection(p);
+        const connected = next?.chain === p.chain && !(section.pinched && parcelSection(next).pinched);
         const tail = Math.min(1, (lane.length - 1 - j) / 3);
         const taper = Math.sqrt(Math.max(0.02, tail));
         for (let k = 0; k < SIDES; k++) {
@@ -109,13 +133,10 @@ export class PourRenderer {
           const depth = s * section.depth * lobe;
           const drift = Math.sin(p.phase * 0.37) * 0.035 * section.breakup;
           positions.setXYZ(j * SIDES + k,
-            p.position.x + (this.side.x * (across + drift) + this.normal.x * depth + Math.cos(p.angle) * bend) * taper,
-            p.position.y + (this.side.y * across + this.normal.y * depth) * taper,
-            p.position.z + (this.side.z * (across + drift) + this.normal.z * depth + Math.sin(p.angle) * bend) * taper);
-          this.dummy.position.copy(this.side).multiplyScalar(c / Math.max(0.001, section.width))
-            .addScaledVector(this.normal, s / Math.max(0.001, section.depth)).normalize();
-          normals.setXYZ(j * SIDES + k, this.dummy.position.x, this.dummy.position.y, this.dummy.position.z);
-          if (j < lane.length - 1 && lane[j + 1]!.chain === p.chain) {
+            center.x + (this.side.x * (across + drift) + this.normal.x * depth + Math.cos(p.angle) * bend) * taper,
+            center.y + (this.side.y * across + this.normal.y * depth) * taper,
+            center.z + (this.side.z * (across + drift) + this.normal.z * depth + Math.sin(p.angle) * bend) * taper);
+          if (connected) {
             const a = j * SIDES + k, b = j * SIDES + (k + 1) % SIDES;
             indices.setX(count++, a); indices.setX(count++, a + SIDES); indices.setX(count++, b);
             indices.setX(count++, b); indices.setX(count++, a + SIDES); indices.setX(count++, b + SIDES);
@@ -123,7 +144,10 @@ export class PourRenderer {
         }
       }
       mesh.geometry.setDrawRange(0, count);
-      positions.needsUpdate = normals.needsUpdate = indices.needsUpdate = true;
+      // 종료된 삼각형을 비워 법선 계산에 이전 프레임의 면이 섞이지 않게 합니다.
+      indices.array.fill(0, count);
+      positions.needsUpdate = indices.needsUpdate = true;
+      mesh.geometry.computeVertexNormals();
     }
     let drops = 0, fine = 0;
     const positions = this.spray.geometry.getAttribute('position') as THREE.BufferAttribute;

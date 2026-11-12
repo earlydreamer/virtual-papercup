@@ -5,6 +5,7 @@ import { cupGravity, spillFlight } from './spill-flight.ts';
 export const MAX_STREAMS = 4;
 export const HISTORY = 72;
 export const PARTICLES = 900;
+export const FRAGMENT_SECONDS = 0.12;
 const STEP = 1 / 90;
 const FLOOR = -1.65;
 const TAU = Math.PI * 2;
@@ -61,15 +62,18 @@ export function streamSources(tilt: Tilt, flow: Float32Array, head: Float32Array
 }
 
 /** 입구의 폭이 빠르게 모인 뒤, 목이 불규칙하게 좁아지며 분열합니다. */
-export function parcelSection(p: Parcel): { width: number; depth: number; bend: number; breakup: number } {
+export function parcelSection(p: Parcel): { width: number; depth: number; bend: number; breakup: number; pinched: boolean } {
   const gather = Math.exp(-p.age * 21);
   const breakup = Math.max(0, Math.min(1, (p.age / p.breakupAge - 0.58) / 0.42));
   const ripple = Math.sin(p.phase + p.age * 17) * 0.11 + Math.sin(p.phase * 0.43 - p.age * 29) * 0.07;
+  const instability = 0.5 + 0.5 * Math.sin(p.phase * 1.7 + Math.sin(p.phase * 0.31) * 0.45);
+  const fragment = Math.max(0, Math.min(1, (p.age - p.breakupAge) / FRAGMENT_SECONDS));
   const neck = (1 + ripple * Math.min(1, p.age * 12))
-    * (1 - breakup * (0.35 + 0.42 * (0.5 + 0.5 * Math.sin(p.phase * 1.7))));
+    * (1 - breakup * (0.1 + 0.88 * instability)) * (1 - fragment * 0.3);
+  const pinched = breakup > 0.9 && instability > 0.86;
   const width = (p.radius + Math.max(0, Math.sin(p.halfArc) * 1.025 - p.radius) * gather) * neck;
   const depth = Math.max(0.006, p.radius * p.radius / Math.max(width, 0.01)) * neck * neck;
-  return { width, depth, bend: gather, breakup };
+  return { width: pinched ? 0.001 : width, depth: pinched ? 0.001 : depth, bend: gather, breakup, pinched };
 }
 
 /** 고정 시간 간격으로 방출된 물의 위치·속도를 보존하는 시각용 유출 모델입니다. */
@@ -159,17 +163,18 @@ export class LiquidStream {
           if (p.position.y <= FLOOR + p.radius) {
             this.impact(p.position, p.velocity, p.radius, true);
             lane.splice(j, 1);
-          } else if (p.age > p.breakupAge) {
+          } else if (p.age > p.breakupAge + FRAGMENT_SECONDS) {
             // 작은 대표 입자로 분열을 표시합니다. 표시 입자의 부피 합은 실제 유출량과 별개입니다.
-            for (let k = 0; k < 12; k++) {
-              const spread = p.radius * 1.7;
+            for (let k = 0; k < 2; k++) {
+              const fine = k === 1;
+              if (fine && this.random() > 0.3) continue;
+              const spread = p.radius * 0.9;
               const across = (this.random() - 0.5) * spread;
               const dx = -Math.sin(p.angle) * across;
               const dz = Math.cos(p.angle) * across;
-              const fine = k > 3;
               const size = fine ? 0.002 + this.random() * 0.004 : 0.006 + Math.pow(this.random(), 2) * Math.min(0.024, p.radius * 0.3);
               this.emit({ x: p.position.x + dx, y: p.position.y + (this.random() - 0.5) * spread, z: p.position.z + dz },
-                { x: p.velocity.x + dx * 6, y: p.velocity.y + (this.random() - 0.5) * 0.45, z: p.velocity.z + dz * 6 }, size, fine);
+                { x: p.velocity.x + dx * 3, y: p.velocity.y + (this.random() - 0.5) * 0.2, z: p.velocity.z + dz * 3 }, size, fine);
             }
             lane.splice(j, 1);
           }
