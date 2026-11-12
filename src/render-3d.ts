@@ -8,6 +8,8 @@ import { collectRimFlow, sampleWaterLevel } from './core/water-surface.ts';
 import { streamSources } from './core/liquid-stream.ts';
 import { PourRenderer } from './render-pour.ts';
 import { advanceRunoff, runoffProfile, runoffTrail } from './runoff.ts';
+import { qualityPixelRatio } from './preferences.ts';
+import type { Quality } from './preferences.ts';
 
 const TAU = Math.PI * 2;
 const RINGS = 22;
@@ -240,6 +242,25 @@ export class CupRenderer3D {
 
   resetView(): void {
     this.camera.position.copy(this.homePosition);
+    this.controls.update();
+  }
+
+  setQuality(quality: Quality): void {
+    this.renderer.setPixelRatio(qualityPixelRatio(quality, window.devicePixelRatio || 1));
+    this.renderer.transmissionResolutionScale = quality === 'economy' ? 0.4 : quality === 'high' ? 0.85 : 0.6;
+  }
+
+  setCameraLocked(locked: boolean): void {
+    this.controls.enableRotate = !locked;
+    this.renderer.domElement.style.cursor = locked ? 'default' : 'grab';
+  }
+
+  rotateView(yaw: number, pitch: number): void {
+    const offset = this.camera.position.clone().sub(this.controls.target);
+    const spherical = new THREE.Spherical().setFromVector3(offset);
+    spherical.theta += yaw;
+    spherical.phi = THREE.MathUtils.clamp(spherical.phi + pitch, this.controls.minPolarAngle, this.controls.maxPolarAngle);
+    this.camera.position.copy(this.controls.target).add(offset.setFromSpherical(spherical));
     this.controls.update();
   }
 

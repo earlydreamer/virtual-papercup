@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
     <meta name="theme-color" content="#0b0d12" />
     <title>가상 종이컵 — 물을 넘치지 않게</title>
@@ -15,19 +15,64 @@
       <canvas id="scene"></canvas>
       <canvas id="scene3d" tabindex="0" aria-label="기울기에 반응하는 3D 종이컵과 물" aria-describedby="cameraHint" hidden></canvas>
 
-      <details class="view-options">
-        <summary>화면 옵션</summary>
-        <label for="renderMode">그래픽 모드</label>
-        <select id="renderMode">
-          <option value="3d" selected>3D · 입체 종이컵</option>
-          <option value="2d">2D · 기존 단면</option>
-        </select>
-        <p id="renderStatus" role="status">컵 안의 수면과 흘러내리는 물을 입체로 봅니다.</p>
-        <div id="cameraOptions" hidden>
-          <p id="cameraHint">한 손가락이나 마우스로 드래그하면 시점을 돌립니다. 센서 없이 물을 기울이려면 방향키를 사용하세요.</p>
-          <button id="btnResetView" type="button">시점 초기화</button>
+      <button id="btnSettings" class="settings-trigger" type="button" aria-haspopup="dialog" aria-controls="settingsDialog">
+        <span aria-hidden="true">⚙</span> 설정
+      </button>
+      <p id="graphicsNotice" class="graphics-notice" role="status" hidden></p>
+      <dialog id="settingsDialog" class="settings-panel" aria-labelledby="settingsTitle">
+        <header class="settings-header">
+          <div><p class="eyebrow">나에게 맞게</p><h2 id="settingsTitle" tabindex="-1">설정</h2></div>
+          <button id="btnCloseSettings" class="icon-button" type="button" aria-label="설정 닫기">✕</button>
+        </header>
+        <div class="settings-content">
+          <p id="settingsPauseHint" class="settings-intro">화면과 알림은 바로 적용됩니다.</p>
+          <section class="settings-section" aria-labelledby="displayTitle">
+            <h3 id="displayTitle">화면</h3>
+            <label class="setting-field" for="renderMode"><span>그래픽 모드</span>
+              <select id="renderMode"><option value="3d">3D · 입체 종이컵</option><option value="2d">2D · 단면</option></select>
+            </label>
+            <p id="renderStatus" class="setting-hint" role="status">컵 안의 수면과 흘러내리는 물을 입체로 봅니다.</p>
+            <div id="qualityOptions">
+              <label class="setting-field" for="quality"><span>3D 선명도</span>
+                <select id="quality"><option value="economy">가볍게</option><option value="balanced">균형 · 기본</option><option value="high">선명하게</option></select>
+              </label>
+              <p class="setting-hint">화면이 느리면 가볍게를 선택하세요.</p>
+            </div>
+            <label class="setting-toggle"><span>기울기 표시<small>화면 한쪽에 기울기 게이지를 표시합니다.</small></span><input id="showGauge" type="checkbox" role="switch" checked /></label>
+          </section>
+          <section id="cameraOptions" class="settings-section" aria-labelledby="cameraTitle" hidden>
+            <h3 id="cameraTitle">시점</h3>
+            <label class="setting-toggle"><span>시점 고정<small>켜면 드래그해도 시점이 움직이지 않습니다.</small></span><input id="cameraLock" type="checkbox" role="switch" /></label>
+            <p id="cameraHint" class="setting-hint">화면을 드래그하거나 아래 버튼으로 시점을 돌립니다.</p>
+            <div class="camera-buttons" role="group" aria-label="시점 방향">
+              <button type="button" data-camera="left" aria-label="시점을 왼쪽으로">← 왼쪽</button>
+              <button type="button" data-camera="right" aria-label="시점을 오른쪽으로">오른쪽 →</button>
+              <button type="button" data-camera="up" aria-label="시점을 위에서 보기">위에서 ↗</button>
+              <button type="button" data-camera="down" aria-label="시점을 낮춰 보기">낮게 ↘</button>
+            </div>
+            <button id="btnResetView" class="setting-button" type="button">시점 초기화</button>
+          </section>
+          <section class="settings-section" aria-labelledby="waterTitle">
+            <h3 id="waterTitle" tabindex="-1">다음 측정의 물</h3>
+            <label class="range-label" for="fill">시작 물 높이 <output id="fillLabel" for="fill">72%</output></label>
+            <input id="fill" type="range" min="30" max="92" value="72" step="1" aria-describedby="fillHint" />
+            <p id="fillHint" class="setting-hint">물이 많을수록 쉽게 넘칩니다. 다음 시작에 적용됩니다.</p>
+            <label class="setting-toggle"><span>물 높이 유지<small id="keepFillHint">물이 줄지 않고 넘친 양만 기록합니다. 다음 시작에 적용됩니다.</small></span><input id="keepFill" type="checkbox" role="switch" aria-describedby="keepFillHint" /></label>
+            <button id="btnApplyFill" class="setting-button" type="button" hidden>현재 컵에도 이 높이 적용</button>
+            <p id="applyFillStatus" class="setting-hint" role="status"></p>
+          </section>
+          <section class="settings-section" aria-labelledby="feedbackTitle">
+            <h3 id="feedbackTitle">알림</h3>
+            <label class="setting-toggle"><span>소리<small>시작할 때와 물이 넘칠 때 알려줍니다.</small></span><input id="sound" type="checkbox" role="switch" checked /></label>
+            <button id="btnTestSound" class="setting-button" type="button">소리 확인</button>
+            <label class="setting-toggle"><span>진동<small id="vibrationHint">물이 넘칠 때 진동으로 알려줍니다.</small></span><input id="vibration" type="checkbox" role="switch" aria-describedby="vibrationHint" checked /></label>
+          </section>
+          <details class="settings-help"><summary>조작 도움말</summary><p>센서 없이 체험할 때는 방향키로 물을 기울이고, 스페이스 키로 가운데로 돌립니다. 2D에서는 컵 위의 마우스 움직임에도 반응합니다. 3D 드래그는 시점만 바꿉니다.</p></details>
+          <button id="btnResetPreferences" class="text-button" type="button">화면·알림 기본값 복원</button>
+          <p id="settingsSaveStatus" class="setting-hint" role="status">이 브라우저에 자동 저장됩니다.</p>
         </div>
-      </details>
+        <footer class="settings-footer"><button id="btnDoneSettings" class="btn btn--primary" type="button">완료</button></footer>
+      </dialog>
 
       <header class="hud">
         <div class="chip">
@@ -53,10 +98,9 @@
       <canvas id="gauge" width="88" height="88"></canvas>
 
       <footer class="bar">
-        <div class="fillctl">
-          <label for="fill">처음 물 높이 <span id="fillLabel">72%</span></label>
-          <input id="fill" type="range" min="30" max="92" value="72" step="1" />
-        </div>
+        <button class="water-shortcut" type="button" data-open-water aria-haspopup="dialog" aria-controls="settingsDialog">
+          <span>물 설정</span><strong data-water-summary>72% · 소진 시 종료</strong>
+        </button>
         <div class="actions">
           <button id="btnStop" class="btn btn--danger" hidden>종료</button>
         </div>
@@ -120,13 +164,7 @@
               </div>
             </div>
           </div>
-          <label class="keepFill">
-            <input id="keepFill" type="checkbox" role="switch" aria-describedby="keepFillHint" />
-            <span>
-              <strong>물 높이 유지</strong>
-              <small id="keepFillHint">물이 줄지 않고 넘친 양만 기록합니다.</small>
-            </span>
-          </label>
+          <div class="ready-settings"><span data-water-summary>72% · 소진 시 종료</span><button type="button" data-open-water aria-haspopup="dialog" aria-controls="settingsDialog">물 설정 변경</button></div>
           <button id="btnStart" class="btn btn--primary" type="button">시작</button>
           <button id="btnRelevel" class="btn btn--ghost" type="button">기준 다시 잡기</button>
         </div>
