@@ -126,3 +126,22 @@ test('산출물의 민감정보와 소스맵을 차단한다', (t) => {
   assert.ok(result.some((item) => item.rule === 'private-ipv4'));
   assert.ok(result.some((item) => item.rule === 'unapproved-artifact'));
 });
+
+test('제품 PNG 경로와 메타데이터 없는 이미지 구조만 허용한다', () => {
+  const chunk = (type, data = Buffer.alloc(0)) => {
+    const size = Buffer.alloc(4); size.writeUInt32BE(data.length);
+    return Buffer.concat([size, Buffer.from(type), data, Buffer.alloc(4)]);
+  };
+  const sig = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const header = chunk('IHDR', Buffer.alloc(13));
+  const image = chunk('IDAT', Buffer.from([1]));
+  const end = chunk('IEND');
+  const png = Buffer.concat([sig, header, image, end]);
+  assert.deepEqual(pathIssues('src/assets/title.png'), []);
+  assert.deepEqual(contentIssues('src/assets/title.png', png), []);
+  assert.deepEqual(contentIssues('assets/title-hash.png', png), []);
+  for (const bad of [Buffer.from('not an image'), Buffer.concat([png, Buffer.from('private')]), Buffer.concat([sig, header, chunk('tEXt', Buffer.from('private')), image, end]), png.subarray(0, png.length - 1)]) {
+    assert.ok(contentIssues('src/assets/title.png', bad).includes('invalid-image'));
+  }
+  assert.ok(pathIssues('docs/title.png').length > 0);
+});
