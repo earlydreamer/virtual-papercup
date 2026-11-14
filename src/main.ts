@@ -13,6 +13,7 @@ import {
 import { initAudio, playSpill, playStart, vibrate } from './audio.ts';
 import { DEFAULT_PREFERENCES, loadPreferences, savePreferences, resetPresentation } from './preferences.ts';
 import type { Preferences, Quality, RenderMode } from './preferences.ts';
+import { loadCalibration, saveCalibration } from './calibration-storage.ts';
 
 let preferences: Preferences;
 try { preferences = loadPreferences(localStorage); } catch { preferences = { ...DEFAULT_PREFERENCES }; }
@@ -75,6 +76,8 @@ elKeepFill.checked = preferences.keepFill;
 
 let cup = new Cup({ fill: fillRatio(), keepFill: preferences.keepFill });
 let calibration: Calibration | null = null;
+try { calibration = loadCalibration(localStorage); } catch { /* 저장소 없이도 기준을 설정할 수 있습니다. */ }
+let calibrationSaved = calibration !== null;
 let returnToTitleAfterLeveling = false;
 let mode: Mode = 'idle';
 let levelStart = 0;
@@ -380,6 +383,7 @@ function finishLeveling(): void {
       cal = calibrate(levelSamples);
     } catch {
       calibration = null;
+      calibrationSaved = false;
       must<HTMLElement>('#titleHint').textContent = '기준을 잡지 못했습니다. 다시 시도해 주세요.';
       must<HTMLButtonElement>('#btnLevel').textContent = '기준 잡기';
       setState('대기');
@@ -392,10 +396,15 @@ function finishLeveling(): void {
     cal = calibrate([{ acc: { x: 0, y: 0, z: GRAVITY }, t: 0 }]);
   }
   calibration = cal;
+  let saved = false;
+  try { saved = saveCalibration(localStorage, cal); } catch { /* 저장소 접근이 막힐 수 있습니다. */ }
+  calibrationSaved = saved;
   mode = 'ready';
   showCard(returnToTitleAfterLeveling ? 'intro' : 'ready');
   if (returnToTitleAfterLeveling) {
-    must<HTMLElement>('#titleHint').textContent = '기준을 잡았습니다. 시작을 누르면 측정합니다.';
+    must<HTMLElement>('#titleHint').textContent = saved
+      ? '기준을 저장했습니다. 시작을 누르면 측정합니다.'
+      : '기준을 잡았습니다. 저장할 수 없어 이 화면에서만 유지됩니다.';
     must<HTMLButtonElement>('#btnLevel').textContent = '기준 다시 잡기';
   }
   setState('준비 완료');
@@ -434,11 +443,16 @@ function stopRunning(reason: string = '종료'): void {
   must<HTMLElement>('#resSpilled').textContent = `${cups}컵`;
 }
 
+function updateTitleCalibration(): void {
+  must<HTMLElement>('#titleHint').textContent = calibration
+    ? (calibrationSaved ? '저장된 기준을 사용합니다. 필요하면 다시 잡아 주세요.' : '기준을 사용합니다. 저장할 수 없어 이 화면에서만 유지됩니다.')
+    : '측정하기 전에 정차 상태에서 기준을 잡아 주세요.';
+  must<HTMLButtonElement>('#btnLevel').textContent = calibration ? '기준 다시 잡기' : '기준 잡기';
+}
+
 function resetAll(): void {
   cup = new Cup({ fill: fillRatio() });
-  calibration = null;
-  must<HTMLElement>('#titleHint').textContent = '측정하기 전에 정차 상태에서 기준을 잡아 주세요.';
-  must<HTMLButtonElement>('#btnLevel').textContent = '기준 잡기';
+  updateTitleCalibration();
   mode = 'idle';
   smoothed = { x: 0, y: 0 };
   lp.reset();
@@ -449,7 +463,7 @@ function resetAll(): void {
   elSpills.textContent = '0';
   elClock.textContent = '0:00';
   elWater.textContent = `${Math.round(cup.fill * 100)}%`;
-  setState('대기');
+  setState(calibration ? '준비 완료' : '대기');
   showCard('intro');
 }
 
@@ -636,7 +650,14 @@ must<HTMLButtonElement>('#btnTitleStart').addEventListener('click', () => {
     must<HTMLButtonElement>('#btnLevel').focus();
     return;
   }
-  beginRunning();
+  void (async () => {
+    if (preferences.sound) initAudio();
+    if (isMotionSupported() && !sensorReady) {
+      sensorReady = await requestMotionPermission();
+      if (!sensorReady) elNotice.textContent = '센서 권한이 없어 마우스·방향키 체험 모드로 진행합니다';
+    }
+    beginRunning();
+  })();
 });
 
 must<HTMLButtonElement>('#btnStart').addEventListener('click', () => {
@@ -671,7 +692,8 @@ resize();
 syncPreferences();
 void selectRenderMode();
 elFillLabel.textContent = `${Math.round(Number(elFill.value))}%`;
-setState('대기');
+updateTitleCalibration();
+setState(calibration ? '준비 완료' : '대기');
 showCard('intro');
 requestAnimationFrame(frame);
 
