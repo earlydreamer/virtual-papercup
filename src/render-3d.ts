@@ -168,7 +168,9 @@ export class CupRenderer3D {
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.target.set(0, -0.9, 0);
     this.controls.enablePan = false;
-    this.controls.enableZoom = false;
+    this.controls.enableZoom = true;
+    this.controls.zoomSpeed = 0.8;
+    this.controls.touches.TWO = THREE.TOUCH.DOLLY_PAN;
     this.controls.enableDamping = false;
     this.controls.rotateSpeed = 0.6;
     this.controls.minPolarAngle = 0.12;
@@ -203,10 +205,15 @@ export class CupRenderer3D {
     this.camera.aspect = width / Math.max(height, 1);
     // 세로 화면에서도 컵과 양옆 물줄기를 담습니다.
     const distance = this.camera.aspect < 0.8 ? 14 / Math.max(this.camera.aspect / 0.65, 0.55) : 10.8;
+    const previousHomeRadius = this.homePosition.distanceTo(this.controls.target);
+    const zoomRatio = this.viewReady ? this.camera.position.distanceTo(this.controls.target) / previousHomeRadius : 1;
     this.homePosition.set(0, distance * 0.72, distance * 0.72);
+    const homeRadius = this.homePosition.distanceTo(this.controls.target);
+    this.controls.minDistance = homeRadius * 0.45;
+    this.controls.maxDistance = homeRadius * 1.5;
     if (this.viewReady) {
-      // 화면 회전·모드 전환 때 직접 고른 방위각과 고도를 보존합니다.
-      const radius = this.homePosition.distanceTo(this.controls.target);
+      // 화면 비율이 바뀌어도 상대 확대율과 시점 방향을 유지합니다.
+      const radius = homeRadius * Math.max(0.45, Math.min(1.5, zoomRatio));
       this.camera.position.sub(this.controls.target).setLength(radius).add(this.controls.target);
       this.controls.update();
     } else {
