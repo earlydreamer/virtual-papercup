@@ -23,8 +23,28 @@ const rules = [
   ['private-resource', /(?:obsidian|file):\/\/|\[\[[^\]\n]*(?:vault|handoff|decisions|sources|projects)[^\]\n]*\]\]/i],
 ];
 
+// 제품 이미지에는 텍스트·메타데이터 청크와 파일 뒤의 추가 데이터를 허용하지 않습니다.
+function isPlainPng(bytes) {
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  if (bytes.length < 45 || !bytes.subarray(0, 8).equals(signature)) return false;
+  let offset = 8, header = false, image = false, end = false;
+  while (offset + 12 <= bytes.length) {
+    const size = bytes.readUInt32BE(offset);
+    if (size > bytes.length - offset - 12) return false;
+    const type = bytes.toString('ascii', offset + 4, offset + 8);
+    if (type === 'IHDR' && !header && offset === 8 && size === 13) header = true;
+    else if (type === 'IDAT' && header && !end) image = true;
+    else if (type === 'IEND' && header && image && !end && size === 0) end = true;
+    else return false;
+    offset += size + 12;
+    if (end) return offset === bytes.length;
+  }
+  return false;
+}
+
 export function contentIssues(name, bytes) {
   if (bytes.length > MAX_BYTES) return ['oversize'];
+  if (/^(?:src\/assets|assets)\/[\w.-]+\.png$/.test(name)) return isPlainPng(bytes) ? [] : ['invalid-image'];
   let text;
   try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
   catch { return ['non-text']; }
@@ -43,7 +63,7 @@ export function contentIssues(name, bytes) {
 export function pathIssues(name) {
   if (name.split('/').some((part) => forbiddenPart.test(part)) ||
     (name !== '.env.example' && forbiddenFile.test(name))) return ['private-file'];
-  if (rootFiles.has(name)) return [];
+  if (rootFiles.has(name) || /^src\/assets\/[\w-]+\.png$/.test(name)) return [];
   if (/^(?:src|tests|scripts)\/(?:[\w-]+\/)*[\w.-]+\.(?:ts|mjs|css)$/.test(name)) return [];
   if (/^docs\/(?:[\w-]+\/)*[\w.-]+\.md$/.test(name)) return [];
   if (name === '.github/workflows/ci.yml') return [];
@@ -74,7 +94,7 @@ export function scanRepository(root, mode = 'worktree') {
       } else if (stat.isFile()) {
         if (stat.nlink > 1) report(name, ['hard-link']);
         if (artifacts) {
-          if (!/\.(?:html|js|css)$/.test(name)) report(name, ['unapproved-artifact']);
+          if (!/\.(?:html|js|css)$/.test(name) && !/^assets\/[\w.-]+\.png$/.test(name)) report(name, ['unapproved-artifact']);
           if (stat.size > MAX_BYTES) report(name, ['oversize']);
           else scanBytes(name, readFileSync(full));
         }
