@@ -1,6 +1,6 @@
 # 저장소 작업 지침
 
-가상 종이컵은 TypeScript와 Vite로 만든 웹 앱입니다. 제품 범위와 사용 흐름은 [README](README.md), 구현에 관한 설명은 [기술 문서](docs/TECHNICAL.md)를 따릅니다.
+버추얼 종이컵은 TypeScript와 Vite로 만든 웹 앱입니다. 제품 범위와 사용 흐름은 [README](README.md), 구현에 관한 설명은 [기술 문서](docs/TECHNICAL.md)를 따릅니다.
 
 ## 작업 경계
 

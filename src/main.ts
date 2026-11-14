@@ -78,7 +78,6 @@ let cup = new Cup({ fill: fillRatio(), keepFill: preferences.keepFill });
 let calibration: Calibration | null = null;
 try { calibration = loadCalibration(localStorage); } catch { /* 저장소 없이도 기준을 설정할 수 있습니다. */ }
 let calibrationSaved = calibration !== null;
-let returnToTitleAfterLeveling = false;
 let mode: Mode = 'idle';
 let levelStart = 0;
 let levelSamples: MotionSample[] = [];
@@ -319,6 +318,7 @@ function showCard(name: keyof typeof cards | null): void {
   }
   elOverlay.classList.toggle('hidden', name === null);
   elBtnStop.hidden = name !== null;
+  settingsButton.hidden = name === 'intro';
   settingsButton.disabled = mode === 'leveling';
   for (const button of document.querySelectorAll<HTMLButtonElement>('[data-open-water]')) button.disabled = mode === 'leveling';
 }
@@ -360,8 +360,7 @@ function getStability(samples: readonly MotionSample[]): number {
 
 // --- 세션 절차 ---
 
-function beginLeveling(returnToTitle = false): void {
-  returnToTitleAfterLeveling = returnToTitle;
+function beginLeveling(): void {
   if (preferences.sound) initAudio();
   mode = 'leveling';
   levelStart = performance.now();
@@ -400,13 +399,11 @@ function finishLeveling(): void {
   try { saved = saveCalibration(localStorage, cal); } catch { /* 저장소 접근이 막힐 수 있습니다. */ }
   calibrationSaved = saved;
   mode = 'ready';
-  showCard(returnToTitleAfterLeveling ? 'intro' : 'ready');
-  if (returnToTitleAfterLeveling) {
-    must<HTMLElement>('#titleHint').textContent = saved
-      ? '기준을 저장했습니다. 시작을 누르면 측정합니다.'
-      : '기준을 잡았습니다. 저장할 수 없어 이 화면에서만 유지됩니다.';
-    must<HTMLButtonElement>('#btnLevel').textContent = '기준 다시 잡기';
-  }
+  must<HTMLElement>('#readySaveStatus').textContent = saved
+    ? '기준을 저장했습니다. 다음에도 사용할 수 있습니다.'
+    : '기준을 저장할 수 없어 이 화면에서만 유지됩니다.';
+  updateTitleCalibration();
+  showCard('ready');
   setState('준비 완료');
   elReadyG.textContent = cal.gMag.toFixed(2);
   elReadyTilt.textContent = '0.0°';
@@ -640,7 +637,7 @@ must<HTMLButtonElement>('#btnLevel').addEventListener('click', () => {
         elNotice.textContent = '센서 권한이 없어 마우스·방향키 체험 모드로 진행합니다';
       }
     }
-    beginLeveling(true);
+    beginLeveling();
   })();
 });
 
@@ -662,6 +659,10 @@ must<HTMLButtonElement>('#btnTitleStart').addEventListener('click', () => {
 
 must<HTMLButtonElement>('#btnStart').addEventListener('click', () => {
   beginRunning();
+});
+must<HTMLButtonElement>('#btnReadyHome').addEventListener('click', () => {
+  updateTitleCalibration();
+  showCard('intro');
 });
 must<HTMLButtonElement>('#btnRelevel').addEventListener('click', () => {
   beginLeveling();
