@@ -318,6 +318,7 @@ function showCard(name: keyof typeof cards | null): void {
   }
   elOverlay.classList.toggle('hidden', name === null);
   elBtnStop.hidden = name !== null;
+  settingsButton.hidden = name === 'intro';
   settingsButton.disabled = mode === 'leveling';
   for (const button of document.querySelectorAll<HTMLButtonElement>('[data-open-water]')) button.disabled = mode === 'leveling';
 }
