@@ -34,6 +34,11 @@ export default defineConfig(({ mode }) => {
       },
     },
     preview: { host, port: 4173, strictPort: true, allowedHosts },
-    build: { sourcemap: false },
+    build: {
+      sourcemap: false,
+      // 상수 배열을 점으로 연결한 문자열로 바꾸면 UUID 표가 IP 주소로 오인됩니다.
+      // 원래 배열 구조를 보존하고 이름·공백만 축소해 산출물 검사를 유지합니다.
+      rolldownOptions: { output: { minify: { compress: false, mangle: true } } },
+    },
   };
 });
