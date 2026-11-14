@@ -177,27 +177,7 @@ export class CupRenderer3D {
   }
 
   private makeCup(): void {
-    const textureCanvas = document.createElement('canvas');
-    textureCanvas.width = 512;
-    textureCanvas.height = 512;
-    const ctx = textureCanvas.getContext('2d')!;
-    ctx.fillStyle = '#f0e9dc';
-    ctx.fillRect(0, 0, 512, 512);
-    // 고정 시드로 종이 섬유를 생성합니다. 외부 이미지는 사용하지 않습니다.
-    let seed = 731;
-    for (let i = 0; i < 26000; i++) {
-      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-      const x = seed % 512;
-      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-      const y = seed % 512;
-      ctx.fillStyle = i % 2 ? 'rgba(94,76,46,0.045)' : 'rgba(255,255,255,0.2)';
-      ctx.fillRect(x, y, 1, 2);
-    }
-    ctx.fillStyle = 'rgba(84,69,46,0.10)';
-    ctx.fillRect(502, 0, 2, 512);
-    const paperTexture = new THREE.CanvasTexture(textureCanvas);
-    paperTexture.colorSpace = THREE.SRGBColorSpace;
-    const paper = new THREE.MeshStandardMaterial({ map: paperTexture, roughness: 0.86, bumpMap: paperTexture, bumpScale: 0.014, side: THREE.DoubleSide });
+    const paper = new THREE.MeshStandardMaterial({ color: '#f5f3ed', roughness: 0.64, side: THREE.DoubleSide });
     const profile = [
       [0, -1], [0.70, -1], [0.735, -0.98], [1, 0.98], [1.005, 1.01],
       [0.975, 1.01], [0.955, 0.97], [0.695, -0.93], [0, -0.93],
