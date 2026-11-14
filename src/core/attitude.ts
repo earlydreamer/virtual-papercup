@@ -115,7 +115,7 @@ export function tiltFrom(cal: Calibration, sample: MotionSample): Tilt {
   // 90도 근처에서 기울기가 실제로 커진다 (그래야 빠르게 쏟아진다).
   const denom = Math.max(Math.abs(sn), cal.gMag * 0.15);
 
-  const tilt: Tilt = { x: sx / denom, y: sy / denom };
+  const tilt: Tilt = { x: sx / denom, y: sy / denom, gravity: { x: sx, y: sy, z: sn } };
   if (overturned) tilt.overturned = true;
   return tilt;
 }
@@ -138,29 +138,39 @@ export class LowPassTilt {
   #y = 0;
   #primed = false;
   readonly #alpha: number;
+  #gravity: Vec3 | undefined;
 
   constructor(alpha: number = 0.25) {
     this.#alpha = alpha;
   }
 
   push(tilt: Tilt): Tilt {
+    if (!tilt.gravity) this.#gravity = undefined;
+    else if (!this.#gravity || !this.#primed || tilt.overturned) this.#gravity = { ...tilt.gravity };
+    else {
+      this.#gravity.x += (tilt.gravity.x - this.#gravity.x) * this.#alpha;
+      this.#gravity.y += (tilt.gravity.y - this.#gravity.y) * this.#alpha;
+      this.#gravity.z += (tilt.gravity.z - this.#gravity.z) * this.#alpha;
+    }
+    const gravity = this.#gravity ? { gravity: { ...this.#gravity } } : {};
     // 뒤집힘은 순간 사건이라 필터를 태우면 안 된다. 그대로 통과시킨다.
     if (tilt.overturned) {
       this.#primed = false;
-      return { x: 0, y: 0, overturned: true };
+      return { ...tilt, ...gravity };
     }
     if (!this.#primed) {
       this.#x = tilt.x;
       this.#y = tilt.y;
       this.#primed = true;
-      return { x: this.#x, y: this.#y };
+      return { x: this.#x, y: this.#y, ...gravity };
     }
     this.#x += (tilt.x - this.#x) * this.#alpha;
     this.#y += (tilt.y - this.#y) * this.#alpha;
-    return { x: this.#x, y: this.#y };
+    return { x: this.#x, y: this.#y, ...gravity };
   }
 
   reset(): void {
+    this.#gravity = undefined;
     this.#primed = false;
     this.#x = 0;
     this.#y = 0;
