@@ -75,6 +75,7 @@ elKeepFill.checked = preferences.keepFill;
 
 let cup = new Cup({ fill: fillRatio(), keepFill: preferences.keepFill });
 let calibration: Calibration | null = null;
+let returnToTitleAfterLeveling = false;
 let mode: Mode = 'idle';
 let levelStart = 0;
 let levelSamples: MotionSample[] = [];
@@ -356,7 +357,8 @@ function getStability(samples: readonly MotionSample[]): number {
 
 // --- 세션 절차 ---
 
-function beginLeveling(): void {
+function beginLeveling(returnToTitle = false): void {
+  returnToTitleAfterLeveling = returnToTitle;
   if (preferences.sound) initAudio();
   mode = 'leveling';
   levelStart = performance.now();
@@ -376,8 +378,11 @@ function finishLeveling(): void {
   if (levelSamples.length >= 5) {
     try {
       cal = calibrate(levelSamples);
-    } catch (err) {
-      elLevelHint.textContent = `기준을 잡지 못했습니다: ${String(err)}`;
+    } catch {
+      calibration = null;
+      must<HTMLElement>('#titleHint').textContent = '기준을 잡지 못했습니다. 다시 시도해 주세요.';
+      must<HTMLButtonElement>('#btnLevel').textContent = '기준 잡기';
+      setState('대기');
       mode = 'idle';
       showCard('intro');
       return;
@@ -388,7 +393,11 @@ function finishLeveling(): void {
   }
   calibration = cal;
   mode = 'ready';
-  showCard('ready');
+  showCard(returnToTitleAfterLeveling ? 'intro' : 'ready');
+  if (returnToTitleAfterLeveling) {
+    must<HTMLElement>('#titleHint').textContent = '기준을 잡았습니다. 시작을 누르면 측정합니다.';
+    must<HTMLButtonElement>('#btnLevel').textContent = '기준 다시 잡기';
+  }
   setState('준비 완료');
   elReadyG.textContent = cal.gMag.toFixed(2);
   elReadyTilt.textContent = '0.0°';
@@ -428,6 +437,8 @@ function stopRunning(reason: string = '종료'): void {
 function resetAll(): void {
   cup = new Cup({ fill: fillRatio() });
   calibration = null;
+  must<HTMLElement>('#titleHint').textContent = '측정하기 전에 정차 상태에서 기준을 잡아 주세요.';
+  must<HTMLButtonElement>('#btnLevel').textContent = '기준 잡기';
   mode = 'idle';
   smoothed = { x: 0, y: 0 };
   lp.reset();
@@ -606,7 +617,7 @@ if (isMotionSupported()) {
 
 // --- 버튼 ---
 
-for (const selector of ['#btnLevel', '#btnTitleStart']) must<HTMLButtonElement>(selector).addEventListener('click', () => {
+must<HTMLButtonElement>('#btnLevel').addEventListener('click', () => {
   void (async () => {
     if (preferences.sound) initAudio();
     if (isMotionSupported() && !sensorReady) {
@@ -615,8 +626,17 @@ for (const selector of ['#btnLevel', '#btnTitleStart']) must<HTMLButtonElement>(
         elNotice.textContent = '센서 권한이 없어 마우스·방향키 체험 모드로 진행합니다';
       }
     }
-    beginLeveling();
+    beginLeveling(true);
   })();
+});
+
+must<HTMLButtonElement>('#btnTitleStart').addEventListener('click', () => {
+  if (!calibration) {
+    must<HTMLElement>('#titleHint').textContent = '먼저 기준 잡기를 눌러 현재 자세를 설정해 주세요.';
+    must<HTMLButtonElement>('#btnLevel').focus();
+    return;
+  }
+  beginRunning();
 });
 
 must<HTMLButtonElement>('#btnStart').addEventListener('click', () => {
