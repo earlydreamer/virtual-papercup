@@ -1,6 +1,6 @@
 # 구현과 한계
 
-가상 종이컵은 센서 입력으로 수면을 계산하고 Canvas 2D 또는 Three.js의 WebGL 3D로 표시하는 브라우저 앱입니다. 사용 방법은 [README](../README.md), 실행·검증은 [개발 안내](DEVELOPMENT.md)에 있습니다.
+버추얼 종이컵은 센서 입력으로 수면을 계산하고 Canvas 2D 또는 Three.js의 WebGL 3D로 표시하는 브라우저 앱입니다. 사용 방법은 [README](../README.md), 실행·검증은 [개발 안내](DEVELOPMENT.md)에 있습니다.
 
 ## 코드 구조
 
