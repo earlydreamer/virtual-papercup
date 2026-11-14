@@ -232,6 +232,7 @@ function openSettings(water = false): void {
 }
 
 settingsButton.addEventListener('click', () => openSettings());
+must<HTMLButtonElement>('#btnTitleSettings').addEventListener('click', () => openSettings());
 for (const button of document.querySelectorAll<HTMLButtonElement>('[data-open-water]')) {
   button.addEventListener('click', () => openSettings(true));
 }
@@ -605,7 +606,7 @@ if (isMotionSupported()) {
 
 // --- 버튼 ---
 
-must<HTMLButtonElement>('#btnLevel').addEventListener('click', () => {
+for (const selector of ['#btnLevel', '#btnTitleStart']) must<HTMLButtonElement>(selector).addEventListener('click', () => {
   void (async () => {
     if (preferences.sound) initAudio();
     if (isMotionSupported() && !sensorReady) {

@@ -107,23 +107,21 @@
       </footer>
 
       <section id="overlay" class="overlay">
-        <div class="card" id="cardIntro">
-          <p class="eyebrow">두부배달 훈련</p>
-          <h1>가상 종이컵</h1>
-          <p class="sub">
-            컵에 담긴 물이 넘치지 않게 달리는 연습입니다.
-            정지 상태에서 기준을 잡으면 거치한 자세를 기준으로 물이 움직입니다.
-          </p>
-          <ol class="steps">
-            <li>폰을 차량 홀더에 단단히 고정합니다.</li>
-            <li>평평한 곳에 정차한 상태에서 <b>기준 잡기</b>를 누릅니다.</li>
-            <li>1.5초 동안 움직이지 마세요.</li>
-            <li>기준이 잡히면 <b>시작</b>을 누르고 출발합니다.</li>
-          </ol>
-          <button id="btnLevel" class="btn btn--primary" type="button">기준 잡기</button>
-          <p class="notice" id="notice">
-            주행 중에는 화면을 보거나 조작하지 마세요. 안전한 곳에 정차한 뒤 사용하세요.
-          </p>
+        <div class="card title-card" id="cardIntro">
+          <div class="title-art"><img src="/src/assets/title.png" alt="차 안의 컵 홀더에 놓인 물이 담긴 종이컵" /></div>
+          <div class="title-content">
+            <p class="eyebrow">두부배달 훈련</p>
+            <h1>가상 종이컵</h1>
+            <p class="sub">흔들리지 않게, 한 방울씩.<br />휴대폰의 움직임에 따라 컵 안의 물이 출렁입니다.</p>
+            <div class="safety-card"><span aria-hidden="true">⚠</span><div><strong>주행 중에는 화면을 보거나 조작하지 마세요.</strong><p>안전한 곳에 정차한 뒤 사용하세요.</p></div></div>
+            <button id="btnTitleStart" class="btn btn--primary" type="button">시작</button>
+            <div class="title-actions">
+              <button id="btnTitleSettings" class="btn btn--ghost" type="button">옵션</button>
+              <button id="btnLevel" class="btn btn--ghost" type="button">기준 잡기</button>
+            </div>
+            <p class="title-hint">시작하면 먼저 현재 자세를 기준으로 잡습니다.</p>
+            <p class="hint" id="notice" role="status"></p>
+          </div>
         </div>
 
         <div class="card" id="cardLevel" hidden>
