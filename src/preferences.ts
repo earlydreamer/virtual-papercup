@@ -13,7 +13,7 @@ export interface Preferences {
 
 export const DEFAULT_PREFERENCES: Readonly<Preferences> = {
   renderMode: '3d', quality: 'balanced', cameraLocked: false, showGauge: true,
-  sound: true, vibration: true, fill: 72, keepFill: false,
+  sound: true, vibration: true, fill: 72, keepFill: true,
 };
 export const PREFERENCES_KEY = 'papercup-preferences';
 

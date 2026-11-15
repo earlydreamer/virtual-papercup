@@ -57,7 +57,7 @@
             <label class="range-label" for="fill">시작 물 높이 <output id="fillLabel" for="fill">72%</output></label>
             <input id="fill" type="range" min="30" max="92" value="72" step="1" aria-describedby="fillHint" />
             <p id="fillHint" class="setting-hint">물이 많을수록 쉽게 넘칩니다. 다음 시작에 적용됩니다.</p>
-            <label class="setting-toggle"><span>물 높이 유지<small id="keepFillHint">물이 줄지 않고 넘친 양만 기록합니다. 다음 시작에 적용됩니다.</small></span><input id="keepFill" type="checkbox" role="switch" aria-describedby="keepFillHint" /></label>
+            <label class="setting-toggle"><span>물 높이 유지<small id="keepFillHint">물이 줄지 않고 넘친 양만 기록합니다. 다음 시작에 적용됩니다.</small></span><input id="keepFill" type="checkbox" role="switch" aria-describedby="keepFillHint" checked /></label>
             <button id="btnApplyFill" class="setting-button" type="button" hidden>현재 컵에도 이 높이 적용</button>
             <p id="applyFillStatus" class="setting-hint" role="status"></p>
           </section>
@@ -99,7 +99,7 @@
 
       <footer class="bar">
         <button class="water-shortcut" type="button" data-open-water aria-haspopup="dialog" aria-controls="settingsDialog">
-          <span>물 설정</span><strong data-water-summary>72% · 소진 시 종료</strong>
+          <span>물 설정</span><strong data-water-summary>72% · 높이 유지</strong>
         </button>
         <div class="actions">
           <button id="btnStop" class="btn btn--danger" hidden>종료</button>
@@ -163,7 +163,7 @@
             </div>
           </div>
           <p id="readySaveStatus" class="hint" role="status"></p>
-          <div class="ready-settings"><span data-water-summary>72% · 소진 시 종료</span><button type="button" data-open-water aria-haspopup="dialog" aria-controls="settingsDialog">물 설정 변경</button></div>
+          <div class="ready-settings"><span data-water-summary>72% · 높이 유지</span><button type="button" data-open-water aria-haspopup="dialog" aria-controls="settingsDialog">물 설정 변경</button></div>
           <button id="btnStart" class="btn btn--primary" type="button">시작</button>
           <button id="btnRelevel" class="btn btn--ghost" type="button">기준 다시 잡기</button>
           <button id="btnReadyHome" class="btn btn--ghost" type="button">타이틀로 돌아가기</button>
