@@ -41,3 +41,10 @@ test('선명도는 해상도 상한을 적용하며 잘못된 화면 배율도 �
   assert.equal(qualityPixelRatio('high', 1), 1);
   assert.equal(qualityPixelRatio('high', NaN), 1);
 });
+
+test('물 높이 유지는 기본으로 켜지고 저장된 선택은 그대로 복원한다', () => {
+  assert.equal(loadPreferences({ getItem: () => null }).keepFill, true);
+  assert.equal(loadPreferences({ getItem: key => key === PREFERENCES_KEY ? '{"keepFill":false}' : null }).keepFill, false);
+  assert.equal(loadPreferences({ getItem: key => key === PREFERENCES_KEY ? '{"keepFill":true}' : null }).keepFill, true);
+  assert.equal(loadPreferences({ getItem: key => key === PREFERENCES_KEY ? '{"renderMode":"2d"}' : null }).keepFill, true);
+});
