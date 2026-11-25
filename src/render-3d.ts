@@ -59,6 +59,7 @@ export class CupRenderer3D {
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.transmissionResolutionScale = 0.6;
     this.scene.background = new THREE.Color('#111a21');
+    // 안개는 원경 바닥에만 적용하고 컵과 물의 재질에서는 제외합니다.
     this.scene.fog = new THREE.Fog('#111a21', 13, 30);
 
     const pmrem = new THREE.PMREMGenerator(this.renderer);
@@ -110,7 +111,7 @@ export class CupRenderer3D {
       color: '#d7e9eb', roughness: 0.035, metalness: 0, transmission: 0.94,
       thickness: 0.7, ior: 1.333, clearcoat: 1, clearcoatRoughness: 0.04,
       attenuationColor: new THREE.Color('#3e9ba8'), attenuationDistance: 1.6,
-      side: THREE.DoubleSide, envMapIntensity: 1.25,
+      side: THREE.DoubleSide, envMapIntensity: 1.25, fog: false,
     });
     const surface = new THREE.Mesh(this.waterGeometry, water);
     surface.frustumCulled = false;
@@ -119,7 +120,7 @@ export class CupRenderer3D {
     const streamMaterial = new THREE.MeshPhysicalMaterial({
       color: '#b5d2da', roughness: 0.065, metalness: 0,
       transparent: true, opacity: 0.64, clearcoat: 1, depthWrite: false,
-      envMapIntensity: 1.3, side: THREE.DoubleSide,
+      envMapIntensity: 1.3, side: THREE.DoubleSide, fog: false,
     });
     this.sheetGeometry.setAttribute('position', new THREE.BufferAttribute(this.sheetPositions, 3).setUsage(THREE.DynamicDrawUsage));
     this.sheetGeometry.setAttribute('color', new THREE.BufferAttribute(this.sheetColors, 4).setUsage(THREE.DynamicDrawUsage));
@@ -179,7 +180,7 @@ export class CupRenderer3D {
   }
 
   private makeCup(): void {
-    const paper = new THREE.MeshStandardMaterial({ color: '#f5f3ed', roughness: 0.64, side: THREE.DoubleSide });
+    const paper = new THREE.MeshStandardMaterial({ color: '#f5f3ed', roughness: 0.64, side: THREE.DoubleSide, fog: false });
     const profile = [
       [0, -1], [0.70, -1], [0.735, -0.98], [1, 0.98], [1.005, 1.01],
       [0.975, 1.01], [0.955, 0.97], [0.695, -0.93], [0, -0.93],
@@ -189,7 +190,7 @@ export class CupRenderer3D {
     body.receiveShadow = true;
     this.cupGroup.add(body);
     const rim = new THREE.Mesh(new THREE.TorusGeometry(0.985, 0.044, 12, 96),
-      new THREE.MeshStandardMaterial({ color: '#fffaed', roughness: 0.58 }));
+      new THREE.MeshStandardMaterial({ color: '#fffaed', roughness: 0.58, fog: false }));
     rim.rotation.x = Math.PI / 2;
     rim.position.y = 1;
     rim.castShadow = true;
@@ -204,7 +205,7 @@ export class CupRenderer3D {
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / Math.max(height, 1);
     // 세로 화면에서도 컵과 양옆 물줄기를 담습니다.
-    const distance = this.camera.aspect < 0.8 ? 14 / Math.max(this.camera.aspect / 0.65, 0.55) : 10.8;
+    const distance = this.camera.aspect < 0.8 ? 10 / Math.max(this.camera.aspect / 0.65, 0.55) : 8.2;
     const previousHomeRadius = this.homePosition.distanceTo(this.controls.target);
     const zoomRatio = this.viewReady ? this.camera.position.distanceTo(this.controls.target) / previousHomeRadius : 1;
     this.homePosition.set(0, distance * 0.72, distance * 0.72);

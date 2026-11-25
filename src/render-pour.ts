@@ -28,7 +28,7 @@ export class PourRenderer {
   constructor(scene: THREE.Scene) {
     const material = new THREE.MeshPhysicalMaterial({ color: '#eef8fa', roughness: 0.035,
       transmission: 1, opacity: 1, thickness: 0.13, ior: 1.333,
-      attenuationColor: new THREE.Color('#b8e0df'), attenuationDistance: 3, envMapIntensity: 0.85 });
+      attenuationColor: new THREE.Color('#b8e0df'), attenuationDistance: 3, envMapIntensity: 0.85, fog: false });
     for (let i = 0; i < MAX_STREAMS + MAX_FRAGMENTS; i++) {
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(HISTORY * SIDES * 3), 3).setUsage(THREE.DynamicDrawUsage));
